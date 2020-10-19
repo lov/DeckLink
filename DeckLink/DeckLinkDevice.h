@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 
-#define kDeckLinkPrimaryPixelFormat bmdFormat8BitARGB
+#define kDeckLinkPrimaryPixelFormat bmdFormat8BitBGRA
 
 typedef void(^DeckLinkDeviceStopPlaybackCompletionHandler)(BOOL success, NSError *error);
 
