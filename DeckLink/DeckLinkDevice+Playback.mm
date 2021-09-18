@@ -68,43 +68,136 @@
 	
 	// Audio
 	{
-		NSMutableArray *formatDescriptions = [NSMutableArray arrayWithCapacity:2];
+		int64_t maxaudiochannels;
+		deckLinkAttributes->GetInt(BMDDeckLinkMaximumAudioChannels, &maxaudiochannels);
+
+		NSMutableArray *formatDescriptions = [NSMutableArray new];
 		
-		// bmdAudioSampleRate48kHz / bmdAudioSampleType16bitInteger
-		{
-			const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 4, 1, 4, 2, 16, 0 };
-			const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_Stereo, 0 };
+		if (maxaudiochannels>=2) {
 			
-			NSDictionary *extensions = @{
-				(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 16-bit, stereo"
-			};
 			
-			CMAudioFormatDescriptionRef formatDescription = NULL;
-			CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
-			
-			if (formatDescription != NULL)
+			// bmdAudioSampleRate48kHz / bmdAudioSampleType16bitInteger
 			{
-				[formatDescriptions addObject:(__bridge id)formatDescription];
+				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 4, 1, 4, 2, 16, 0 };
+				const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_Stereo, 0 };
+				
+				NSDictionary *extensions = @{
+					(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 16-bit, stereo"
+				};
+				
+				CMAudioFormatDescriptionRef formatDescription = NULL;
+				CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
+				
+				if (formatDescription != NULL)
+				{
+					[formatDescriptions addObject:(__bridge id)formatDescription];
+				}
 			}
+			
+			// bmdAudioSampleRate48kHz / bmdAudioSampleType32bitInteger
+			{
+				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 8, 1, 8, 2, 32, 0 };
+				const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_Stereo, 0 };
+				
+				NSDictionary *extensions = @{
+					(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 32-bit, stereo"
+				};
+				
+				CMAudioFormatDescriptionRef formatDescription = NULL;
+				CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
+				
+				if (formatDescription != NULL)
+				{
+					[formatDescriptions addObject:(__bridge id)formatDescription];
+				}
+			}
+
 		}
 		
-		// bmdAudioSampleRate48kHz / bmdAudioSampleType32bitInteger
-		{
-			const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 8, 1, 8, 2, 32, 0 };
-			const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_Stereo, 0 };
+		if (maxaudiochannels>=8) {
 			
-			NSDictionary *extensions = @{
-				(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 32-bit, stereo"
-			};
 			
-			CMAudioFormatDescriptionRef formatDescription = NULL;
-			CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
-			
-			if (formatDescription != NULL)
+			// bmdAudioSampleRate48kHz / bmdAudioSampleType16bitInteger
 			{
-				[formatDescriptions addObject:(__bridge id)formatDescription];
+				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 4, 1, 4, 8, 16, 0 };
+				const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_DiscreteInOrder| 8, 0 };
+				
+				
+				NSDictionary *extensions = @{
+					(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 16-bit, 8 channels"
+				};
+				
+				CMAudioFormatDescriptionRef formatDescription = NULL;
+				CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
+				
+				if (formatDescription != NULL)
+				{
+					[formatDescriptions addObject:(__bridge id)formatDescription];
+				}
 			}
+			
+			// bmdAudioSampleRate48kHz / bmdAudioSampleType32bitInteger
+			{
+				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 8, 1, 8, 8, 32, 0 };
+				const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_DiscreteInOrder | 8, 0 };
+
+				NSDictionary *extensions = @{
+					(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 32-bit, 8 channels"
+				};
+				
+				CMAudioFormatDescriptionRef formatDescription = NULL;
+				CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
+				
+				if (formatDescription != NULL)
+				{
+					[formatDescriptions addObject:(__bridge id)formatDescription];
+				}
+			}
+
 		}
+
+		if (maxaudiochannels>=16) {
+			
+			
+			// bmdAudioSampleRate48kHz / bmdAudioSampleType16bitInteger
+			{
+				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 4, 1, 4, 16, 16, 0 };
+				const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_DiscreteInOrder| 16, 0 };
+				
+				
+				NSDictionary *extensions = @{
+					(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 16-bit, 16 channels"
+				};
+				
+				CMAudioFormatDescriptionRef formatDescription = NULL;
+				CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
+				
+				if (formatDescription != NULL)
+				{
+					[formatDescriptions addObject:(__bridge id)formatDescription];
+				}
+			}
+			
+			// bmdAudioSampleRate48kHz / bmdAudioSampleType32bitInteger
+			{
+				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 8, 1, 8, 16, 32, 0 };
+				const AudioChannelLayout channelLayout = { kAudioChannelLayoutTag_DiscreteInOrder | 16, 0 };
+
+				NSDictionary *extensions = @{
+					(__bridge id)kCMFormatDescriptionExtension_FormatName: @"48.000 Hz, 32-bit, 16 channels"
+				};
+				
+				CMAudioFormatDescriptionRef formatDescription = NULL;
+				CMAudioFormatDescriptionCreate(NULL, &streamBasicDescription, sizeof(channelLayout), &channelLayout, 0, NULL, (__bridge CFDictionaryRef)extensions, &formatDescription);
+				
+				if (formatDescription != NULL)
+				{
+					[formatDescriptions addObject:(__bridge id)formatDescription];
+				}
+			}
+
+		}
+
 		
 		self.playbackAudioFormatDescriptions = formatDescriptions;
 		// TODO: get active format description
@@ -425,6 +518,25 @@
 		}
 	});
 }
+
+- (void)playback16bitAudioBuffer:(short *)audiobuffer numberOfSamples:(UInt32)numberOfSamples completionHandler:(void(^)(void))completionHandler
+{
+	dispatch_async(self.playbackQueue, ^{
+		uint32_t outNumberOfSamples = 0;
+		deckLinkOutput->WriteAudioSamplesSync(audiobuffer, numberOfSamples, &outNumberOfSamples);
+		
+		if (numberOfSamples != outNumberOfSamples)
+		{
+			NSLog(@"%s:%d:Dropped Audio Samples: %u != %u", __FUNCTION__, __LINE__, numberOfSamples, outNumberOfSamples);
+		}
+		
+		if (completionHandler)
+		{
+			completionHandler();
+		}
+	});
+}
+
 
 - (NSUInteger)frameBufferCount
 {
