@@ -30,8 +30,8 @@
 	if (deckLinkOutput->GetDisplayModeIterator(&displayModeIterator) == S_OK)
 	{
 		BMDPixelFormat pixelFormats[] = {
-			kDeckLinkPrimaryPixelFormat,  
 			bmdFormat8BitYUV, // == kCVPixelFormatType_422YpCbCr8 == '2vuy'
+			kDeckLinkPrimaryRGBPixelFormat,  
 		};
 		
 		NSMutableArray *formatDescriptions = [NSMutableArray array];
@@ -268,7 +268,7 @@
 			BMDVideoOutputFlags flags = bmdVideoOutputFlagDefault;
 			
 			deckLinkOutput->DisableVideoOutput();
-			
+						
 			HRESULT status = deckLinkOutput->EnableVideoOutput(displayMode, flags);
 			if (status != S_OK)
 			{
@@ -524,7 +524,7 @@
 	dispatch_async(self.playbackQueue, ^{
 		uint32_t outNumberOfSamples = 0;
 		deckLinkOutput->WriteAudioSamplesSync(audiobuffer, numberOfSamples, &outNumberOfSamples);
-		
+		free(audiobuffer);
 		if (numberOfSamples != outNumberOfSamples)
 		{
 			NSLog(@"%s:%d:Dropped Audio Samples: %u != %u", __FUNCTION__, __LINE__, numberOfSamples, outNumberOfSamples);
