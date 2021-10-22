@@ -46,14 +46,7 @@
 		{
 			return nil;
 		}
-		
-		// to output both fields when we are using DisplayVideoFrameSync(), we need to disable flicker removal
-		BOOL result = deckLinkConfiguration->SetFlag(bmdDeckLinkConfigFieldFlickerRemoval, false);
-		
-		if (!result) {
-			NSLog(@"error turning off bmdDeckLinkConfigFieldFlickerRemoval");
-		}
-		
+				
 		if (deckLink->QueryInterface(IID_IDeckLinkKeyer, (void **)&deckLinkKeyer) != S_OK)
 		{
 			// keyer may be nil

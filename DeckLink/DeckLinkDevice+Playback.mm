@@ -18,6 +18,17 @@
 		return;
 	}
 	
+	HRESULT status = deckLinkConfiguration->SetFlag(bmdDeckLinkConfigFieldFlickerRemoval, false);
+	if (status != S_OK)
+	{
+		NSLog(@"Decklink: error turning off bmdDeckLinkConfigFieldFlickerRemoval");
+	} else {
+		
+		NSLog(@"Decklink: turned off bmdDeckLinkConfigFieldFlickerRemoval");
+
+	}
+
+	
 	self.playbackSupported = YES;
 	
 	self.playbackQueue = dispatch_queue_create("DeckLinkDevice.playbackQueue", DISPATCH_QUEUE_SERIAL);
