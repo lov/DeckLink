@@ -3,6 +3,7 @@
 #include <CoreVideo/CoreVideo.h>
 #include "DeckLinkAPI.h"
 
+#include <stdatomic.h>
 
 class DeckLinkPixelBufferFrame : public IDeckLinkVideoFrame
 {
@@ -33,6 +34,6 @@ public:
 private:
 	CVPixelBufferRef pixelBuffer;
 	bool locked;
-	int32_t refCount;
+	atomic_int refCount;
 	BMDFrameFlags frameFlags;
 };

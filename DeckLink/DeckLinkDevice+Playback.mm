@@ -86,6 +86,9 @@
 		
 		if (maxaudiochannels>=2) {
 			
+			//
+			// for now, we only support 16bit audio
+			//
 			
 			// bmdAudioSampleRate48kHz / bmdAudioSampleType16bitInteger
 			{
@@ -105,6 +108,7 @@
 				}
 			}
 			
+			/*
 			// bmdAudioSampleRate48kHz / bmdAudioSampleType32bitInteger
 			{
 				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 8, 1, 8, 2, 32, 0 };
@@ -122,6 +126,7 @@
 					[formatDescriptions addObject:(__bridge id)formatDescription];
 				}
 			}
+			*/
 
 		}
 		
@@ -147,6 +152,7 @@
 				}
 			}
 			
+			/*
 			// bmdAudioSampleRate48kHz / bmdAudioSampleType32bitInteger
 			{
 				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 8, 1, 8, 8, 32, 0 };
@@ -164,7 +170,7 @@
 					[formatDescriptions addObject:(__bridge id)formatDescription];
 				}
 			}
-
+			*/
 		}
 
 		if (maxaudiochannels>=16) {
@@ -189,6 +195,7 @@
 				}
 			}
 			
+			/*
 			// bmdAudioSampleRate48kHz / bmdAudioSampleType32bitInteger
 			{
 				const AudioStreamBasicDescription streamBasicDescription = { 48000.0, kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger, 8, 1, 8, 16, 32, 0 };
@@ -206,6 +213,7 @@
 					[formatDescriptions addObject:(__bridge id)formatDescription];
 				}
 			}
+			 */
 
 		}
 

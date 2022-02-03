@@ -1,5 +1,6 @@
 #import "DeckLinkDeviceInternalInputCallback.h"
 
+#include <stdatomic.h>
 
 DeckLinkDeviceInternalInputCallback::DeckLinkDeviceInternalInputCallback(id<DeckLinkDeviceInternalInputCallbackDelegate> delegate) :
 delegate(delegate),
@@ -49,12 +50,14 @@ HRESULT DeckLinkDeviceInternalInputCallback::QueryInterface(REFIID iid, LPVOID *
 
 ULONG DeckLinkDeviceInternalInputCallback::AddRef(void)
 {
-	return OSAtomicIncrement32(&refCount);
+	return atomic_fetch_add(&refCount, 1);
 }
 
 ULONG DeckLinkDeviceInternalInputCallback::Release(void)
 {
-	int32_t newRefValue = OSAtomicDecrement32(&refCount);
+	int32_t oldRefValue = atomic_fetch_add(&refCount, -1);	// Note: atomic_fetch_add() returns the previous value
+	int32_t newRefValue = oldRefValue - 1;
+	
 	if(newRefValue == 0)
 	{
 		delete this;
