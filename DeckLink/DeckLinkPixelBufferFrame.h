@@ -2,7 +2,6 @@
 
 #include <CoreVideo/CoreVideo.h>
 #include "DeckLinkAPI.h"
-
 #include <stdatomic.h>
 
 class DeckLinkPixelBufferFrame : public IDeckLinkVideoFrame

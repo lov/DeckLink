@@ -3,6 +3,7 @@
 #include "DeckLinkAPI.h"
 #include <stdatomic.h>
 
+
 // internal use only!
 
 @protocol DeckLinkDeviceInternalOutputCallbackDelegate <NSObject>

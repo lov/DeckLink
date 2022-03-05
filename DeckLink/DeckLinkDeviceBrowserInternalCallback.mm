@@ -52,6 +52,7 @@ ULONG DeckLinkDeviceBrowserInternalCallback::Release(void)
 {
 	int32_t oldRefValue = atomic_fetch_add(&refCount, -1);	// Note: atomic_fetch_add() returns the previous value
 	int32_t newRefValue = oldRefValue - 1;
+	
 	if (newRefValue == 0)
 	{
 		delete this;
