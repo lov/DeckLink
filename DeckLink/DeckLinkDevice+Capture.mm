@@ -52,7 +52,7 @@ static inline void CaptureQueue_dispatch_sync(dispatch_queue_t queue, dispatch_b
 	if (deckLinkInput->GetDisplayModeIterator(&displayModeIterator) == S_OK)
 	{
 		BMDPixelFormat pixelFormats[] = {
-			kDeckLinkPrimaryPixelFormat, 
+			kDeckLinkPrimaryRGBPixelFormat, 
 			bmdFormat8BitYUV, // == kCVPixelFormatType_422YpCbCr8 == '2vuy'
 		};
 			
