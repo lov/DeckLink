@@ -8,18 +8,18 @@
 
 @property (nonatomic, copy, readonly) NSArray *playbackVideoFormatDescriptions;
 @property (atomic, strong, readonly) __attribute__((NSObject)) CMVideoFormatDescriptionRef playbackActiveVideoFormatDescription;
-- (BOOL)setPlaybackActiveVideoFormatDescription:(CMVideoFormatDescriptionRef)formatDescription error:(NSError **)error;
+- (void)setPlaybackActiveVideoFormatDescription:(CMVideoFormatDescriptionRef)formatDescription completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock;
 
 @property (nonatomic, copy, readonly) NSArray *playbackAudioFormatDescriptions;
 @property (atomic, strong, readonly) __attribute__((NSObject)) CMAudioFormatDescriptionRef playbackActiveAudioFormatDescription;
-- (BOOL)setPlaybackActiveAudioFormatDescription:(CMAudioFormatDescriptionRef)formatDescription error:(NSError **)error;
+- (void)setPlaybackActiveAudioFormatDescription:(CMAudioFormatDescriptionRef)formatDescription completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock;
 
 @property (atomic, assign, readonly) BOOL playbackSupported;
 @property (atomic, assign, readonly) BOOL playbackActive;
 
 @property (nonatomic, copy, readonly) NSArray *playbackKeyingModes;
 @property (atomic, strong, readonly) NSString *playbackActiveKeyingMode;
-- (BOOL)setPlaybackActiveKeyingMode:(NSString *)keyingMode alpha:(float)alpha error:(NSError **)error;
+- (void)setPlaybackActiveKeyingMode:(NSString *)keyingMode alpha:(float)alpha completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock;
 
 - (void)startScheduledPlaybackWithStartTime:(NSUInteger)startTime timeScale:(NSUInteger)timeScale;
 - (void)schedulePlaybackOfPixelBuffer:(CVPixelBufferRef)pixelBuffer displayTime:(NSUInteger)displayTime frameDuration:(NSUInteger)frameDuration timeScale:(NSUInteger)timeScale;
@@ -34,11 +34,11 @@
 
 @property (nonatomic, copy, readonly) NSArray *playbackVideoConnections;
 @property (atomic, strong, readonly) NSString *playbackActiveVideoConnection;
-- (BOOL)setPlaybackActiveVideoConnection:(NSString *)connection error:(NSError **)error;
+- (void)setPlaybackActiveVideoConnection:(NSString *)connection completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock;
 
 @property (nonatomic, copy, readonly) NSArray *playbackAudioConnections;
 @property (atomic, strong, readonly) NSString *playbackActiveAudioConnection;
-- (BOOL)setPlaybackActiveAudioConnection:(NSString *)connection error:(NSError **)error;
+- (void)setPlaybackActiveAudioConnection:(NSString *)connection completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock;
 
 - (BOOL)startPlaybackWithError:(NSError **)error;
 - (void)stopPlayback;

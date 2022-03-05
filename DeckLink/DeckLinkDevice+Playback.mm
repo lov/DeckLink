@@ -262,12 +262,13 @@
 	}
 }
 
-- (BOOL)setPlaybackActiveVideoFormatDescription:(CMVideoFormatDescriptionRef)formatDescription error:(NSError **)outError
+- (void)setPlaybackActiveVideoFormatDescription:(CMVideoFormatDescriptionRef)formatDescription completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock
 {
-	__block BOOL result = NO;
-	__block NSError *error = nil;
-	
-	dispatch_sync(self.playbackQueue, ^{
+	dispatch_async(self.playbackQueue, ^{
+		
+		BOOL result = NO;
+		NSError *error = nil;
+
 		if (formatDescription != NULL)
 		{
 			if (![self.playbackVideoFormatDescriptions containsObject:(__bridge id)formatDescription])
@@ -302,29 +303,22 @@
 		
 		self.playbackActiveVideoFormatDescription = formatDescription;
 		result = YES;
+		
+		
+		if (callbackBlock) callbackBlock(result, error);
+
 	});
 	
-	if (error != nil)
-	{
-		if (outError != NULL)
-		{
-			*outError = error;
-		}
-		else
-		{
-			NSLog(@"%s:%d: %@", __FUNCTION__, __LINE__, error);
-		}
-	}
-	
-	return result;
 }
 
-- (BOOL)setPlaybackActiveAudioFormatDescription:(CMAudioFormatDescriptionRef)formatDescription error:(NSError **)outError
+- (void)setPlaybackActiveAudioFormatDescription:(CMAudioFormatDescriptionRef)formatDescription completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock
 {
-	__block BOOL result = NO;
-	__block NSError *error = nil;
 	
-	dispatch_sync(self.playbackQueue, ^{
+	dispatch_async(self.playbackQueue, ^{
+		
+		BOOL result = NO;
+		NSError *error = nil;
+
 		if (formatDescription != NULL)
 		{
 			if (![self.playbackAudioFormatDescriptions containsObject:(__bridge id)formatDescription])
@@ -355,29 +349,21 @@
 		
 		self.playbackActiveAudioFormatDescription = formatDescription;
 		result = YES;
+		
+		if (callbackBlock) callbackBlock(result, error);
+
 	});
 	
-	if (error != nil)
-	{
-		if (outError != NULL)
-		{
-			*outError = error;
-		}
-		else
-		{
-			NSLog(@"%s:%d: %@", __FUNCTION__, __LINE__, error);
-		}
-	}
-	
-	return result;
 }
 
-- (BOOL)setPlaybackActiveKeyingMode:(NSString *)keyingMode alpha:(float)alpha error:(NSError **)outError
+- (void)setPlaybackActiveKeyingMode:(NSString *)keyingMode alpha:(float)alpha completedHandler:(void (^)(BOOL status, NSError *outError))callbackBlock
 {
-	__block BOOL result = NO;
-	__block NSError *error = nil;
 	
-	dispatch_sync(self.playbackQueue, ^{
+	dispatch_async(self.playbackQueue, ^{
+		
+		BOOL result = NO;
+		NSError *error = nil;
+
 		if (deckLinkKeyer != NULL)
 		{
 			HRESULT status = E_NOTIMPL;
@@ -415,21 +401,12 @@
 		self.playbackActiveKeyingMode = keyingMode;
 		self.playbackKeyingAlpha = alpha;
 		result = YES;
+		
+		if (callbackBlock) callbackBlock(result, error);
+
 	});
 	
-	if (error != nil)
-	{
-		if (outError != NULL)
-		{
-			*outError = error;
-		}
-		else
-		{
-			NSLog(@"%s:%d: %@", __FUNCTION__, __LINE__, error);
-		}
-	}
-	
-	return result;
+
 }
 
 - (void)startScheduledPlaybackWithStartTime:(NSUInteger)startTime timeScale:(NSUInteger)timeScale
@@ -509,9 +486,9 @@
 		
 		dispatch_async(self.playbackQueue, ^{
 			// the second queue is sending the image data to the device immediately but don't need to wait for next download
-			
+		//	NSLog(@"calling DisplayVideoFrameSync...");
 			deckLinkOutput->DisplayVideoFrameSync(frame);
-
+		//	NSLog(@"DisplayVideoFrameSync done!");
 			frame->Release();
 			
 			CFRelease(pixelBuffer);
