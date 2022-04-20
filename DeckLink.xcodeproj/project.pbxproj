@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		30B40236280EDB950027B1C0 /* DecklinkMetalBufferFrame.h in Headers */ = {isa = PBXBuildFile; fileRef = 30B40234280EDB950027B1C0 /* DecklinkMetalBufferFrame.h */; };
+		30B4023B280EDC170027B1C0 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 30B4023A280EDC170027B1C0 /* Metal.framework */; };
+		30B4023D280EDDDE0027B1C0 /* DecklinkMetalBufferFrame.mm in Sources */ = {isa = PBXBuildFile; fileRef = 30B4023C280EDDDE0027B1C0 /* DecklinkMetalBufferFrame.mm */; };
 		5061E94A1B164177003552DE /* DeckLink.h in Headers */ = {isa = PBXBuildFile; fileRef = 5061E9491B164177003552DE /* DeckLink.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		5061E9501B164177003552DE /* DeckLink.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5061E9441B164177003552DE /* DeckLink.framework */; };
 		5061E9571B164177003552DE /* DeckLink_011_InformationTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 5061E9561B164177003552DE /* DeckLink_011_InformationTests.m */; };
@@ -73,6 +76,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		30B40234280EDB950027B1C0 /* DecklinkMetalBufferFrame.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DecklinkMetalBufferFrame.h; sourceTree = "<group>"; };
+		30B4023A280EDC170027B1C0 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		30B4023C280EDDDE0027B1C0 /* DecklinkMetalBufferFrame.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = DecklinkMetalBufferFrame.mm; sourceTree = "<group>"; };
 		5061E9441B164177003552DE /* DeckLink.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = DeckLink.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		5061E9481B164177003552DE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		5061E9491B164177003552DE /* DeckLink.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DeckLink.h; sourceTree = "<group>"; };
@@ -137,6 +143,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5061EB401B17319B003552DE /* CoreMedia.framework in Frameworks */,
+				30B4023B280EDC170027B1C0 /* Metal.framework in Frameworks */,
 				5061EB3F1B17319B003552DE /* CoreVideo.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -282,6 +289,7 @@
 		5061EB3E1B173179003552DE /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				30B4023A280EDC170027B1C0 /* Metal.framework */,
 				5061EB3C1B17316E003552DE /* CoreVideo.framework */,
 				5061EB3A1B173164003552DE /* CoreMedia.framework */,
 			);
@@ -297,6 +305,8 @@
 				5061EB841B18446C003552DE /* DeckLinkDeviceInternalOutputCallback.mm */,
 				5061EB871B18A9E2003552DE /* DeckLinkPixelBufferFrame.h */,
 				5061EB881B18A9E2003552DE /* DeckLinkPixelBufferFrame.cpp */,
+				30B40234280EDB950027B1C0 /* DecklinkMetalBufferFrame.h */,
+				30B4023C280EDDDE0027B1C0 /* DecklinkMetalBufferFrame.mm */,
 			);
 			name = Internal;
 			sourceTree = "<group>";
@@ -331,6 +341,7 @@
 				95C8B90D20E52CA900E9BB0D /* DeckLinkAPIDeckControl.h in Headers */,
 				95C8B90720E52CA900E9BB0D /* DeckLinkAPI.h in Headers */,
 				5061EADC1B164376003552DE /* DeckLinkInformation.h in Headers */,
+				30B40236280EDB950027B1C0 /* DecklinkMetalBufferFrame.h in Headers */,
 				5061EAEE1B1652F2003552DE /* DeckLinkDevice.h in Headers */,
 				95C8B91320E52CA900E9BB0D /* DeckLinkAPIVersion.h in Headers */,
 				5061EAE91B165073003552DE /* DeckLinkDeviceBrowserInternalCallback.h in Headers */,
@@ -463,6 +474,7 @@
 				5061EB5E1B179014003552DE /* DeckLinkDeviceInternalInputCallback.mm in Sources */,
 				5061EAEF1B1652F2003552DE /* DeckLinkDevice.mm in Sources */,
 				95C8B90320E52CA900E9BB0D /* DeckLinkAPIDispatch.cpp in Sources */,
+				30B4023D280EDDDE0027B1C0 /* DecklinkMetalBufferFrame.mm in Sources */,
 				5061EB2A1B16E946003552DE /* DeckLinkDevice+Capture.mm in Sources */,
 				5061EAE51B164E0A003552DE /* DeckLinkDeviceBrowser.mm in Sources */,
 				5061EB8A1B18A9E2003552DE /* DeckLinkPixelBufferFrame.cpp in Sources */,

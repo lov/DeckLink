@@ -7,6 +7,7 @@
 #import "DeckLinkKeying.h"
 #import "DeckLinkPixelBufferFrame.h"
 #import "DeckLinkVideoConnection+Internal.h"
+#import "DecklinkMetalBufferFrame.h"
 
 
 @implementation DeckLinkDevice (Playback)
@@ -499,6 +500,41 @@
 
 	});
 }
+
+- (void)playbackMetalBuffer:(id<MTLBuffer>)metalBuffer ofSize:(NSSize)size rowBytes:(NSUInteger)rowBytes pixelFormat:(uint32_t)pixelformat isFlipped:(BOOL)flipped {
+	
+	atomic_fetch_add(&_sampleBufferCount_BackingStore, 1);
+
+	//
+	// unlike playbackPixelBuffer: this operation is happening synchronously
+	// the metalBuffer is already in CPU RAM, and it is not retained, so when the operation is finished, we can re-use it on the host app
+	//
+	
+	DeckLinkMetalBufferFrame *frame = new DeckLinkMetalBufferFrame(metalBuffer);
+	
+	frame->SetWidth((long)size.width);
+	frame->SetHeight((long)size.height);
+	frame->SetRowBytes((long)rowBytes);
+	
+	frame->SetPixelFormat(pixelformat);
+	
+	//NSLog(@"width: %lld height: %lld rowbytes: %lld", frame->GetWidth(), frame->GetHeight(), frame->GetRowBytes());
+	
+	if (flipped)
+	{
+		
+		frame->setFlags(bmdFrameFlagFlipVertical);
+	}
+	
+	// the second queue is sending the image data to the device immediately but don't need to wait for next download
+	deckLinkOutput->DisplayVideoFrameSync(frame);
+	frame->Release();
+	
+
+	atomic_fetch_add(&_sampleBufferCount_BackingStore, -1);
+
+}
+
 
 - (void)playbackContinuousAudioBufferList:(AudioBufferList *)audioBufferList numberOfSamples:(UInt32)numberOfSamples completionHandler:(void(^)(void))completionHandler
 {

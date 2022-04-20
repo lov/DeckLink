@@ -2,7 +2,7 @@
 
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
-
+#import <Metal/Metal.h>
 
 @interface DeckLinkDevice (Playback)
 
@@ -26,6 +26,8 @@
 - (void)stopScheduledPlaybackWithCompletionHandler:(DeckLinkDeviceStopPlaybackCompletionHandler)completionHandler;
 - (void)playbackPixelBuffer:(CVPixelBufferRef)pixelBuffer;
 - (void)playbackPixelBuffer:(CVPixelBufferRef)pixelBuffer isFlipped:(BOOL)flipped;
+
+- (void)playbackMetalBuffer:(id<MTLBuffer>)metalBuffer ofSize:(NSSize)size rowBytes:(NSUInteger)rowBytes pixelFormat:(uint32_t)pixelformat isFlipped:(BOOL)flipped;
 
 - (void)playbackContinuousAudioBufferList:(AudioBufferList *)audioBufferList numberOfSamples:(UInt32)numberOfSamples completionHandler:(void(^)(void))completionHandler;
 - (void)playback16bitAudioBuffer:(short *)audiobuffer numberOfSamples:(UInt32)numberOfSamples completionHandler:(void(^)(void))completionHandler;
