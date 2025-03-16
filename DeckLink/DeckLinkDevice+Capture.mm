@@ -54,6 +54,7 @@ static inline void CaptureQueue_dispatch_sync(dispatch_queue_t queue, dispatch_b
 		BMDPixelFormat pixelFormats[] = {
 			kDeckLinkPrimaryRGBPixelFormat, 
 			bmdFormat8BitYUV, // == kCVPixelFormatType_422YpCbCr8 == '2vuy'
+			bmdFormat10BitYUV
 		};
 			
 		NSMutableArray *formatDescriptions = [NSMutableArray array];
@@ -784,7 +785,19 @@ static inline void CaptureQueue_dispatch_sync(dispatch_queue_t queue, dispatch_b
 		BMDDisplayMode pixelFormat = 0;
 		if (flags & bmdDetectedVideoInputYCbCr422)
 		{
-			pixelFormat = bmdFormat8BitYUV;
+			
+			FourCharCode codecType = CMVideoFormatDescriptionGetCodecType([self captureActiveVideoFormatDescription]);
+			
+			if (codecType == kCVPixelFormatType_422YpCbCr10) {
+				
+				pixelFormat = bmdFormat10BitYUV;
+
+			} else {
+				
+				pixelFormat = bmdFormat8BitYUV;
+
+			}
+			
 		}
 		else if (flags & bmdDetectedVideoInputRGB444)
 		{
