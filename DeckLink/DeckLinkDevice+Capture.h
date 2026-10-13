@@ -22,7 +22,7 @@
 
 @interface DeckLinkDevice (Capture)
 
-@property (atomic, assign, readonly) BOOL captureSupported;
+@property (nonatomic, assign, readonly) BOOL captureSupported;
 
 /**
  * Set if the capturing was started.

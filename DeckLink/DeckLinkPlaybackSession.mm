@@ -1,24 +1,33 @@
-#import "DeckLinkPlaybackSession.h"
-#import "DeckLinkDevice+Internal.h"
+#import "DeckLinkPlaybackSession+Internal.h"
+#import "DeckLinkPlaybackGroup+Internal.h"
+#import "CMFormatDescription+DeckLink.h"
 #import "DeckLinkKeying.h"
 #include <cmath>
 
 typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
     DeckLinkSessionNew, DeckLinkSessionReady, DeckLinkSessionPrerolling,
-    DeckLinkSessionRunning, DeckLinkSessionClosing, DeckLinkSessionClosed, DeckLinkSessionFailed,
+    DeckLinkSessionStarting, DeckLinkSessionRunning, DeckLinkSessionClosing, DeckLinkSessionClosed, DeckLinkSessionFailed,
 };
 
+// Created and accessed exclusively on the device's playback queue.
 @interface DeckLinkSessionAudioPacket : NSObject
-@property (copy) NSData *data;
-@property UInt32 samples, offset;
-@property int64_t time;
+@property (nonatomic, copy) NSData *data;
+@property (nonatomic, assign) UInt32 samples, offset;
+@property (nonatomic, assign) int64_t time;
 @end
 @implementation DeckLinkSessionAudioPacket
 @end
 
-static NSError *SessionError(HRESULT status) {
-    return status == S_OK ? nil : [NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:nil];
+@implementation DeckLinkPlaybackOutput
+- (instancetype)initWithDevice:(DeckLinkDevice *)device videoFormat:(CMVideoFormatDescriptionRef)video
+                   audioFormat:(CMAudioFormatDescriptionRef)audio keyingMode:(NSString *)keyer audioSource:(DeckLinkPlaybackAudioSource)source {
+    if ((self = [super init])) {
+        _device = device; _videoFormat = video; _audioFormat = audio;
+        _keyingMode = [keyer copy] ?: DeckLinkKeyingModeNone; _audioSource = [source copy];
+    }
+    return self;
 }
+@end
 
 @interface DeckLinkPlaybackSession () {
     id _videoFormat, _audioFormat;
@@ -28,88 +37,67 @@ static NSError *SessionError(HRESULT status) {
     dispatch_source_t _audioTimer;
     DeckLinkPlaybackAudioSource _audioSource;
     DeckLinkSessionAudioPacket *_pendingAudio;
-    NSMutableArray<DeckLinkPlaybackCompletion> *_closeHandlers;
     NSUInteger _channels, _bytesPerFrame, _audioCapacity;
     int64_t _audioCursor, _lastVideoTime;
     double _lastAudioProgressHostTime;
-    BOOL _sourceDiscontinuity;
+    BOOL _sourceDiscontinuity, _reportedReady;
+    NSUInteger _minimumVideoPreroll, _prerolledVideoFrames;
+    __weak DeckLinkPlaybackGroup *_group;
 }
 @end
 
 @implementation DeckLinkPlaybackSession
-- (instancetype)initWithDevice:(DeckLinkDevice *)device videoFormat:(CMVideoFormatDescriptionRef)video
-                   audioFormat:(CMAudioFormatDescriptionRef)audio frameDuration:(CMTime)duration keyingMode:(NSString *)keyer {
+- (instancetype)initWithOutput:(DeckLinkPlaybackOutput *)output group:(DeckLinkPlaybackGroup *)group {
     if ((self = [super init])) {
-        _device = device; _videoFormat = (__bridge id)video; _audioFormat = (__bridge id)audio;
-        _frameDuration = duration; _keyingMode = [keyer copy] ?: DeckLinkKeyingModeNone;
+        _device = output.device; _videoFormat = (__bridge id)output.videoFormat; _audioFormat = (__bridge id)output.audioFormat;
+        _keyingMode = output.keyingMode; _audioSource = output.audioSource; _group = group;
+        _frameDuration = kCMTimeInvalid;
+        if (output.videoFormat) CMVideoFormatDescriptionGetDeckLinkFrameRate(output.videoFormat, &_frameDuration);
         _lastVideoTime = -1;
-        _closeHandlers = [NSMutableArray new];
     }
     return self;
 }
 
+- (CMTime)frameDuration { return _frameDuration; }
+
 - (void)dealloc {
     if (_audioTimer) dispatch_source_cancel(_audioTimer);
-    // Explicit close is the normal path. Keep the device alive for fallback drain.
-    if (_state != DeckLinkSessionNew && _state != DeckLinkSessionClosed) {
-        DeckLinkDevice *device = _device;
-        [device stopScheduledPlaybackWithInternalCompletion:^(HRESULT status) {
-            if (status == S_OK) {
-                [device setAudioFormatOnPlaybackQueue:NULL timestamped:YES];
-                [device setVideoFormatOnPlaybackQueue:NULL];
-            }
-        }];
+}
+
+- (HRESULT)reserveOnQueue {
+    if (_state != DeckLinkSessionNew || ![_device canOpenPlaybackSessionOnQueue]) return E_ACCESSDENIED;
+    if (!CMTIME_IS_NUMERIC(_frameDuration) || _frameDuration.value <= 0) return E_INVALIDARG;
+    HRESULT supported = [_device validateVideoFormatOnQueue:(__bridge CMVideoFormatDescriptionRef)_videoFormat];
+    if (supported != S_OK) return supported;
+    _device.scheduledPlaybackSession = self;
+    return S_OK;
+}
+
+// A failed open keeps ownership; the group's close disables whatever was enabled.
+- (HRESULT)openOnQueue:(int64_t)groupID {
+    if (_state != DeckLinkSessionNew || _device.scheduledPlaybackSession != self) return E_ACCESSDENIED;
+    const AudioStreamBasicDescription *asbd = _audioFormat ? CMAudioFormatDescriptionGetStreamBasicDescription((__bridge CMAudioFormatDescriptionRef)_audioFormat) : NULL;
+    HRESULT status = S_OK;
+    if (_audioFormat && (!asbd || asbd->mSampleRate != 48000 || asbd->mFormatID != kAudioFormatLinearPCM || !asbd->mChannelsPerFrame ||
+        (asbd->mBitsPerChannel != 16 && asbd->mBitsPerChannel != 32) ||
+        !(asbd->mFormatFlags & kAudioFormatFlagIsSignedInteger) || (asbd->mFormatFlags & kAudioFormatFlagIsNonInterleaved))) status = E_INVALIDARG;
+    _minimumVideoPreroll = MAX((NSUInteger)1, _device.minimumPrerollVideoFrames);
+    if (_minimumVideoPreroll > 64) status = E_INVALIDARG;
+    CMTime capacity = CMTimeConvertScale(_frameDuration, 48000, kCMTimeRoundingMethod_RoundAwayFromZero);
+    NSUInteger bytesPerFrame = asbd ? (NSUInteger)asbd->mChannelsPerFrame * (asbd->mBitsPerChannel / 8) : 0;
+    if (status == S_OK && (!CMTIME_IS_NUMERIC(capacity) || capacity.value <= 0 || capacity.value > UINT32_MAX ||
+        (bytesPerFrame && (uint64_t)capacity.value > (8 * 1024 * 1024) / bytesPerFrame))) status = E_INVALIDARG;
+    if (status == S_OK) {
+        _channels = asbd ? asbd->mChannelsPerFrame : 0;
+        _bytesPerFrame = bytesPerFrame;
+        _audioCapacity = (NSUInteger)capacity.value;
+        if (groupID) status = [_device configurePlaybackGroupOnQueue:groupID];
+        if (status == S_OK) status = [_device setVideoFormatOnPlaybackQueue:(__bridge CMVideoFormatDescriptionRef)_videoFormat];
+        if (status == S_OK) status = [_device setAudioFormatOnPlaybackQueue:(__bridge CMAudioFormatDescriptionRef)_audioFormat];
+        if (status == S_OK) status = [_device setKeyingOnPlaybackQueue:_keyingMode];
     }
-}
-
-- (void)openWithCompletion:(DeckLinkPlaybackCompletion)completion {
-    dispatch_async(_device.playbackQueue, ^{
-        HRESULT status = S_OK;
-        if (self->_state != DeckLinkSessionNew) status = E_ABORT;
-        else if (![self->_device canOpenPlaybackSessionOnQueue]) status = E_ACCESSDENIED;
-        else if (!self->_videoFormat || !CMTIME_IS_NUMERIC(self->_frameDuration) || self->_frameDuration.value <= 0) status = E_INVALIDARG;
-        const AudioStreamBasicDescription *asbd = self->_audioFormat ? CMAudioFormatDescriptionGetStreamBasicDescription((__bridge CMAudioFormatDescriptionRef)self->_audioFormat) : NULL;
-        if (status == S_OK && self->_audioFormat && (!asbd || asbd->mSampleRate != 48000 ||
-            asbd->mFormatID != kAudioFormatLinearPCM || !asbd->mChannelsPerFrame ||
-            (asbd->mBitsPerChannel != 16 && asbd->mBitsPerChannel != 32) ||
-            !(asbd->mFormatFlags & kAudioFormatFlagIsSignedInteger) || (asbd->mFormatFlags & kAudioFormatFlagIsNonInterleaved))) status = E_INVALIDARG;
-        CMTime capacity = kCMTimeInvalid;
-        NSUInteger bytesPerFrame = 0;
-        if (status == S_OK) {
-            capacity = CMTimeConvertScale(self->_frameDuration, 48000, kCMTimeRoundingMethod_RoundAwayFromZero);
-            bytesPerFrame = asbd ? (NSUInteger)asbd->mChannelsPerFrame * (asbd->mBitsPerChannel / 8) : 0;
-            if (!CMTIME_IS_NUMERIC(capacity) || capacity.value <= 0 || capacity.value > UINT32_MAX ||
-                (bytesPerFrame && (uint64_t)capacity.value > (8 * 1024 * 1024) / bytesPerFrame)) status = E_INVALIDARG;
-        }
-        if (status == S_OK) {
-            self->_device.scheduledPlaybackSession = self;
-            self->_channels = asbd ? asbd->mChannelsPerFrame : 0;
-            self->_bytesPerFrame = bytesPerFrame;
-            self->_audioCapacity = (NSUInteger)capacity.value;
-            status = [self->_device setVideoFormatOnPlaybackQueue:(__bridge CMVideoFormatDescriptionRef)self->_videoFormat];
-            if (status == S_OK) status = [self->_device setAudioFormatOnPlaybackQueue:(__bridge CMAudioFormatDescriptionRef)self->_audioFormat timestamped:YES];
-            if (status == S_OK) status = [self->_device setKeyingOnPlaybackQueue:self->_keyingMode alpha:1.0];
-            if (status != S_OK) {
-                // A partially configured output is not a usable session.
-                HRESULT audioCleanup = [self->_device setAudioFormatOnPlaybackQueue:NULL timestamped:YES];
-                HRESULT videoCleanup = [self->_device setVideoFormatOnPlaybackQueue:NULL];
-                if (audioCleanup == S_OK && videoCleanup == S_OK) self->_device.scheduledPlaybackSession = nil;
-            }
-        }
-        if (self->_state == DeckLinkSessionNew) self->_state = status == S_OK ? DeckLinkSessionReady :
-            (self->_device.scheduledPlaybackSession == self ? DeckLinkSessionFailed : DeckLinkSessionClosed);
-        if (completion) [self->_device deliverPlaybackCallback:^{ completion(status == S_OK, SessionError(status)); }];
-    });
-}
-
-- (void)setAudioSource:(DeckLinkPlaybackAudioSource)source {
-    [_device performPlaybackSync:^{
-        if (self->_state == DeckLinkSessionClosing || self->_state == DeckLinkSessionClosed) return;
-        if (self->_pendingAudio) self->_audioCursor = self->_pendingAudio.time + self->_pendingAudio.offset;
-        self->_pendingAudio = nil;
-        self->_sourceDiscontinuity = self->_audioSource != nil;
-        self->_audioSource = [source copy];
-    }];
+    _state = status == S_OK ? DeckLinkSessionReady : DeckLinkSessionFailed;
+    return status;
 }
 
 - (void)startAudioWorker {
@@ -127,8 +115,7 @@ static NSError *SessionError(HRESULT status) {
     if (_state == DeckLinkSessionFailed || _state == DeckLinkSessionClosing || _state == DeckLinkSessionClosed) return;
     _state = DeckLinkSessionFailed;
     if (_audioTimer) { dispatch_source_cancel(_audioTimer); _audioTimer = nil; }
-    void (^handler)(NSError *) = self.errorHandler;
-    if (handler) [_device deliverPlaybackCallback:^{ handler(SessionError(status)); }];
+    [_group memberFailed:status];
 }
 
 - (BOOL)readClock:(DeckLinkPlaybackClock *)clock {
@@ -138,52 +125,105 @@ static NSError *SessionError(HRESULT status) {
     return YES;
 }
 
+// The earliest frame boundary this session may still schedule, or -1.
 - (int64_t)nextVideoTime {
-    if (_state == DeckLinkSessionReady && _lastVideoTime < 0) return 0;
+    if (_state == DeckLinkSessionReady || _state == DeckLinkSessionPrerolling) {
+        return _lastVideoTime < 0 ? 0 : (_lastVideoTime <= INT64_MAX - _frameDuration.value ? _lastVideoTime + _frameDuration.value : -1);
+    }
     if (_state != DeckLinkSessionRunning) return -1;
     DeckLinkPlaybackClock clock;
     if (![self readClock:&clock]) return -1;
     double now = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()));
     int64_t samples = clock.streamTime + (int64_t)(MAX(0, now - clock.hostTime) * 48000 * clock.speed);
     int64_t time = CMTimeConvertScale(CMTimeMake(samples, 48000), _frameDuration.timescale, kCMTimeRoundingMethod_RoundTowardZero).value;
-    int64_t next = (time / _frameDuration.value + 1) * _frameDuration.value;
-    return next > _lastVideoTime ? next : -1;
+    return (time / _frameDuration.value + 1) * _frameDuration.value;
 }
 
-- (void)submitPixelBuffer:(CVPixelBufferRef)buffer {
-    if (!buffer) return;
+- (void)submitPixelBuffer:(CVPixelBufferRef)buffer atTime:(int64_t)target accepted:(void (^)(HRESULT))accepted {
     [_device performPlaybackSync:^{
-        if (self->_state != DeckLinkSessionReady && self->_state != DeckLinkSessionRunning) return;
+        if (!buffer || target < 0 || target % self->_frameDuration.value || target > INT64_MAX - self->_frameDuration.value) { accepted(E_INVALIDARG); return; }
+        if (self->_state != DeckLinkSessionReady && self->_state != DeckLinkSessionPrerolling && self->_state != DeckLinkSessionRunning) { accepted(E_ACCESSDENIED); return; }
         __weak typeof(self) weakSelf = self;
-        __block int64_t time = -1;
-        [self->_device enqueuePlaybackPixelBuffer:buffer frameDuration:self->_frameDuration.value timeScale:self->_frameDuration.timescale maximumFrames:3 displayTime:^int64_t {
-            typeof(self) session = weakSelf;
-            time = session ? [session nextVideoTime] : -1; return time;
-        } accepted:^(HRESULT status) {
-            typeof(self) session = weakSelf;
-            if (!session || session->_state == DeckLinkSessionClosing || session->_state == DeckLinkSessionClosed) return;
-            // A busy device or duplicate slot drops video only, never healthy audio.
-            if (status == S_FALSE || status == E_OUTOFMEMORY) return;
-            if (status != S_OK) { [session fail:status]; return; }
-            session->_lastVideoTime = time;
-            if (session->_state == DeckLinkSessionReady) {
-                session->_state = DeckLinkSessionPrerolling;
-                [session startAudioWorker];
-                session->_lastAudioProgressHostTime = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()));
-                [session serviceAudio];
-            }
-        } completed:^(DeckLinkScheduledFrameResult result) {
-            typeof(self) session = weakSelf;
-            if (session && result == DeckLinkScheduledFrameFlushed && (session->_state == DeckLinkSessionRunning || session->_state == DeckLinkSessionPrerolling)) [session fail:E_FAIL];
-        }];
+        [self->_device enqueuePlaybackPixelBuffer:buffer frameDuration:self->_frameDuration.value timeScale:self->_frameDuration.timescale
+            maximumFrames:MAX((NSUInteger)3, self->_minimumVideoPreroll) displayTime:^int64_t {
+                typeof(self) session = weakSelf;
+                if (!session) return -1;
+                int64_t next = [session nextVideoTime];
+                if (next < 0 || target < next || target <= session->_lastVideoTime) return -1;
+                // Preroll is contiguous from zero.
+                if (session->_state != DeckLinkSessionRunning && target != next) return -1;
+                return target;
+            } accepted:^(HRESULT status) {
+                typeof(self) session = weakSelf;
+                if (session && session->_state != DeckLinkSessionClosing && session->_state != DeckLinkSessionClosed &&
+                    status != S_FALSE && status != E_OUTOFMEMORY) {
+                    if (status != S_OK) [session fail:status];
+                    else [session frameAccepted:target];
+                }
+                if (accepted) accepted(status);
+            } completed:^(BMDOutputFrameCompletionResult result) {
+                typeof(self) session = weakSelf;
+                if (session && result == bmdOutputFrameFlushed &&
+                    (session->_state == DeckLinkSessionRunning || session->_state == DeckLinkSessionPrerolling || session->_state == DeckLinkSessionStarting)) [session fail:E_FAIL];
+            }];
     }];
 }
 
-- (void)startIfPrerolled {
-    if (_state != DeckLinkSessionPrerolling || _pendingAudio || (_channels && !_audioCursor)) return;
-    HRESULT status = [_device startPlaybackOnQueue:0 timeScale:_frameDuration.timescale];
-    if (status != S_OK) [self fail:status];
-    else _state = DeckLinkSessionRunning;
+- (void)frameAccepted:(int64_t)time {
+    _lastVideoTime = time;
+    if (_state != DeckLinkSessionReady && _state != DeckLinkSessionPrerolling) return;
+    ++_prerolledVideoFrames;
+    if (_state == DeckLinkSessionReady) {
+        _state = DeckLinkSessionPrerolling;
+        [self startAudioWorker];
+        _lastAudioProgressHostTime = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()));
+    }
+    [self serviceAudio];
+    [self reportReadyIfPrerolled];
+}
+
+- (BOOL)isReadyForGroupStartOnQueue {
+    return _state == DeckLinkSessionPrerolling && _prerolledVideoFrames >= _minimumVideoPreroll && !_pendingAudio && (!_channels || _audioCursor >= (int64_t)_audioCapacity);
+}
+
+- (void)reportReadyIfPrerolled {
+    if (_reportedReady || ![self isReadyForGroupStartOnQueue]) return;
+    _reportedReady = YES;
+    [_group memberReady];
+}
+
+- (HRESULT)prepareGroupStartOnQueue {
+    if (![self isReadyForGroupStartOnQueue]) return E_ABORT;
+    _state = DeckLinkSessionStarting; // Suspend workers until every member is marked running.
+    return [_device endAudioPrerollOnQueue];
+}
+
+- (void)groupDidStartOnQueue {
+    if (_state == DeckLinkSessionStarting) { _device.playbackActive = YES; _state = DeckLinkSessionRunning; }
+}
+
+- (void)devicePlaybackStoppedOnQueue {
+    if (_state == DeckLinkSessionRunning || _state == DeckLinkSessionStarting) [self fail:E_ABORT];
+}
+
+- (void)beginGroupCloseOnQueue {
+    _state = DeckLinkSessionClosing;
+    _audioSource = nil; _pendingAudio = nil;
+    if (_audioTimer) { dispatch_source_cancel(_audioTimer); _audioTimer = nil; }
+}
+
+- (HRESULT)disableGroupOutputOnQueue {
+    // Both disables run even if one fails, so partial cleanup is retryable.
+    HRESULT audio = [_device setAudioFormatOnPlaybackQueue:NULL];
+    HRESULT video = [_device setVideoFormatOnPlaybackQueue:NULL];
+    if (audio != S_OK || video != S_OK) return audio != S_OK ? audio : video;
+    [_device restorePlaybackGroupOnQueue];
+    return S_OK;
+}
+
+- (void)releaseGroupOwnershipOnQueue {
+    _state = DeckLinkSessionClosed;
+    if (_device.scheduledPlaybackSession == self) _device.scheduledPlaybackSession = nil;
 }
 
 - (void)serviceAudio {
@@ -191,7 +231,7 @@ static NSError *SessionError(HRESULT status) {
     DeckLinkPlaybackClock clock = {};
     clock.hostTime = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()));
     if (_state == DeckLinkSessionRunning && ![self readClock:&clock]) return;
-    if (!_channels) { [self startIfPrerolled]; return; }
+    if (!_channels) { [self reportReadyIfPrerolled]; return; }
     if (_state == DeckLinkSessionRunning) {
         if (_pendingAudio && _pendingAudio.time + _pendingAudio.offset < clock.streamTime) {
             // Never retry a stale timestamp. Its PCM has already been consumed;
@@ -237,7 +277,7 @@ static NSError *SessionError(HRESULT status) {
         packet.offset += written;
         _lastAudioProgressHostTime = clock.hostTime;
         if (packet.offset == packet.samples) _pendingAudio = nil;
-        [self startIfPrerolled];
+        [self reportReadyIfPrerolled];
     } else if (clock.hostTime - _lastAudioProgressHostTime >= 0.25) {
         [self fail:E_FAIL];
     }
@@ -245,35 +285,4 @@ static NSError *SessionError(HRESULT status) {
     // retain the original PCM and offset, without allocating/copying its suffix.
 }
 
-- (void)closeWithCompletion:(DeckLinkPlaybackCompletion)completion {
-    [_device performPlaybackSync:^{
-        self->_audioSource = nil;
-        self->_pendingAudio = nil;
-        if (completion) [self->_closeHandlers addObject:[completion copy]];
-        if (self->_state == DeckLinkSessionClosing) return;
-        if (self->_state == DeckLinkSessionNew || self->_state == DeckLinkSessionClosed || self->_device.scheduledPlaybackSession != self) {
-            self->_state = DeckLinkSessionClosed;
-            [self finishClose:S_OK]; return;
-        }
-        self->_state = DeckLinkSessionClosing;
-        if (self->_audioTimer) { dispatch_source_cancel(self->_audioTimer); self->_audioTimer = nil; }
-        [self->_device stopScheduledPlaybackWithInternalCompletion:^(HRESULT status) {
-            if (status == S_OK) {
-                // Both disables run even if one fails, so partial cleanup is retryable.
-                HRESULT audio = [self->_device setAudioFormatOnPlaybackQueue:NULL timestamped:YES];
-                HRESULT video = [self->_device setVideoFormatOnPlaybackQueue:NULL];
-                status = audio != S_OK ? audio : video;
-            }
-            [self finishClose:status];
-        }];
-    }];
-}
-
-- (void)finishClose:(HRESULT)status {
-    _state = status == S_OK ? DeckLinkSessionClosed : DeckLinkSessionFailed;
-    if (status == S_OK && _device.scheduledPlaybackSession == self) _device.scheduledPlaybackSession = nil;
-    NSArray<DeckLinkPlaybackCompletion> *handlers = [_closeHandlers copy];
-    [_closeHandlers removeAllObjects];
-    [_device deliverPlaybackCallback:^{ for (DeckLinkPlaybackCompletion handler in handlers) handler(status == S_OK, SessionError(status)); }];
-}
 @end

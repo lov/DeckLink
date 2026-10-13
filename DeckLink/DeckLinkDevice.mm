@@ -1,8 +1,57 @@
 #import "DeckLinkDevice.h"
 
 #import <CoreMedia/CoreMedia.h>
+#include <atomic>
 #import "DeckLinkAPI.h"
 #import "DeckLinkDevice+Internal.h"
+#import "DeckLinkPlaybackSession+Internal.h"
+
+@interface DeckLinkPlaybackGroupAttributes ()
+- (instancetype)initWithAttributes:(IDeckLinkProfileAttributes *)attributes modelName:(NSString *)modelName;
+@end
+
+@implementation DeckLinkPlaybackGroupAttributes
+- (instancetype)initWithAttributes:(IDeckLinkProfileAttributes *)attributes modelName:(NSString *)modelName {
+    self = [super init];
+    if (self) {
+        int64_t value = 0;
+        _deviceGroupID = attributes && attributes->GetInt(BMDDeckLinkDeviceGroupID, &value) == S_OK ? @(value) : nil;
+        _subDeviceIndex = attributes && attributes->GetInt(BMDDeckLinkSubDeviceIndex, &value) == S_OK ? @(value) : nil;
+        _numberOfSubDevices = attributes && attributes->GetInt(BMDDeckLinkNumberOfSubDevices, &value) == S_OK && value > 0 ? (NSUInteger)value : 0;
+        bool supported = false;
+        _supportsPlaybackSynchronization = attributes && attributes->GetFlag(BMDDeckLinkSupportsSynchronizeToPlaybackGroup, &supported) == S_OK && supported;
+        _minimumPrerollVideoFrames = attributes && attributes->GetInt(BMDDeckLinkMinimumPrerollFrames, &value) == S_OK && value > 0 ? (NSUInteger)value : 1;
+        _playbackGroupRequiresReference = ![modelName isEqualToString:@"DeckLink 8K Pro"];
+    }
+    return self;
+}
+@end
+
+class DeckLinkProfileCallback : public IDeckLinkProfileCallback {
+    std::atomic<ULONG> refs {1};
+    __weak DeckLinkDevice *device;
+public:
+    DeckLinkProfileCallback(DeckLinkDevice *value) : device(value) {}
+    HRESULT QueryInterface(REFIID iid, LPVOID *value) override {
+        if (!value) return E_POINTER;
+        *value = nullptr;
+        CFUUIDBytes unknown = CFUUIDGetUUIDBytes(IUnknownUUID);
+        if (memcmp(&iid, &IID_IDeckLinkProfileCallback, sizeof(iid)) && memcmp(&iid, &unknown, sizeof(iid))) return E_NOINTERFACE;
+        *value = this; AddRef(); return S_OK;
+    }
+    ULONG AddRef() override { return ++refs; }
+    ULONG Release() override { ULONG count = --refs; if (!count) delete this; return count; }
+    HRESULT ProfileChanging(IDeckLinkProfile *, bool) override { [device invalidatePlayback]; return S_OK; }
+    HRESULT ProfileActivated(IDeckLinkProfile *) override {
+        DeckLinkDevice *target = device;
+        if (target.playbackQueue) dispatch_async(target.playbackQueue, ^{
+            [target refreshPlaybackGroupAttributes];
+            [target refreshPlaybackFormats];
+        });
+        else [target refreshPlaybackGroupAttributes];
+        return S_OK;
+    }
+};
 
 
 @interface DeckLinkDevice (CaptureSetup)
@@ -21,9 +70,7 @@
 
 @implementation DeckLinkDevice
 
-// The getter for the read-only \c frameBufferCount must not be synthesized but will instead by provided by a category.
-// Otherwise, the synthesized method and the category method would clash at runtime.
-@dynamic frameBufferCount;
+@dynamic referenceSignalLocked;
 
 @synthesize deckLink = deckLink;
 
@@ -78,16 +125,64 @@
 		
 		[self setupCapture];
 		[self setupPlayback];
+        deckLink->QueryInterface(IID_IDeckLinkStatus, (void **)&deckLinkStatus);
+        [self refreshPlaybackGroupAttributes];
+        if (deckLink->QueryInterface(IID_IDeckLinkProfileManager, (void **)&deckLinkProfileManager) == S_OK) {
+            deckLinkProfileCallback = new DeckLinkProfileCallback(self);
+            if (deckLinkProfileManager->SetCallback(deckLinkProfileCallback) != S_OK) {
+                deckLinkProfileCallback->Release(); deckLinkProfileCallback = NULL;
+            }
+        }
 	}
 	return self;
 }
 
+- (void)refreshPlaybackGroupAttributes {
+    dispatch_block_t refresh = ^{
+        self.playbackGroupAttributes = [[DeckLinkPlaybackGroupAttributes alloc] initWithAttributes:deckLinkAttributes modelName:self.modelName];
+    };
+    // Serialize driver queries with playback and other profile refreshes.
+    if (self.playbackQueue) [self performPlaybackSync:refresh];
+    else refresh();
+}
+
+// Custom getters retain the published snapshot through its atomic strong accessor.
+- (NSNumber *)deviceGroupID { return self.playbackGroupAttributes.deviceGroupID; }
+- (NSNumber *)subDeviceIndex { return self.playbackGroupAttributes.subDeviceIndex; }
+- (NSUInteger)numberOfSubDevices { return self.playbackGroupAttributes.numberOfSubDevices; }
+- (BOOL)supportsPlaybackSynchronization { return self.playbackGroupAttributes.supportsPlaybackSynchronization; }
+- (NSUInteger)minimumPrerollVideoFrames { return MAX((NSUInteger)1, self.playbackGroupAttributes.minimumPrerollVideoFrames); }
+- (BOOL)playbackGroupRequiresReference {
+    DeckLinkPlaybackGroupAttributes *attributes = self.playbackGroupAttributes;
+    return attributes ? attributes.playbackGroupRequiresReference : YES;
+}
+
+- (BOOL)referenceSignalLocked {
+    if (!self.playbackQueue) return NO;
+    __block bool locked = false;
+    [self performPlaybackSync:^{
+        if (deckLinkStatus) deckLinkStatus->GetFlag(bmdDeckLinkStatusReferenceSignalLocked, &locked);
+    }];
+    return locked;
+}
+
+- (void)invalidatePlayback {
+    if (!self.playbackQueue) return;
+    dispatch_async(self.playbackQueue, ^{ [self.scheduledPlaybackSession fail:E_ABORT]; });
+}
+
 - (void)dealloc
 {
+    if (deckLinkProfileManager) {
+        if (deckLinkProfileCallback) deckLinkProfileManager->SetCallback(NULL);
+        deckLinkProfileManager->Release();
+    }
+    if (deckLinkProfileCallback) deckLinkProfileCallback->Release();
+    if (deckLinkStatus) deckLinkStatus->Release();
 	if (deckLinkOutput != NULL)
 	{
 		// Stop/disable before dropping retained scheduled buffers or the callback.
-        deckLinkOutput->StopScheduledPlayback(0, NULL, 0);
+        if (self.playbackActive) deckLinkOutput->StopScheduledPlayback(0, NULL, 0);
         deckLinkOutput->DisableAudioOutput();
         deckLinkOutput->DisableVideoOutput();
         deckLinkOutput->SetScheduledFrameCompletionCallback(NULL);

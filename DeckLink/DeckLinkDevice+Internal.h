@@ -9,6 +9,8 @@
 #import "DeckLinkDevice+Playback.h"
 
 @class DeckLinkPlaybackSession;
+@class DeckLinkPlaybackGroup;
+class DeckLinkProfileCallback;
 
 /// Stop progress tracked exclusively on playbackQueue.
 typedef NS_ENUM(NSUInteger, DeckLinkScheduledStopState) {
@@ -17,6 +19,7 @@ typedef NS_ENUM(NSUInteger, DeckLinkScheduledStopState) {
     DeckLinkScheduledStopWaitingForFrames,
 };
 typedef void (^DeckLinkPlaybackStatusCompletion)(HRESULT status);
+typedef void (^DeckLinkScheduledFrameCompletion)(BMDOutputFrameCompletionResult result);
 
 struct DeckLinkPlaybackClock {
     bool running;
@@ -31,6 +34,17 @@ struct DeckLinkPlaybackClock {
 };
 
 
+/// Immutable attributes from one completed driver query sequence.
+/// Hold one snapshot while validating related fields across a profile refresh.
+@interface DeckLinkPlaybackGroupAttributes : NSObject
+@property (nonatomic, copy, readonly) NSNumber *deviceGroupID;
+@property (nonatomic, copy, readonly) NSNumber *subDeviceIndex;
+@property (nonatomic, assign, readonly) NSUInteger numberOfSubDevices;
+@property (nonatomic, assign, readonly) BOOL supportsPlaybackSynchronization;
+@property (nonatomic, assign, readonly) NSUInteger minimumPrerollVideoFrames;
+@property (nonatomic, assign, readonly) BOOL playbackGroupRequiresReference;
+@end
+
 @interface DeckLinkDevice ()
 {
 	IDeckLink *deckLink;
@@ -39,19 +53,21 @@ struct DeckLinkPlaybackClock {
 	IDeckLinkKeyer *deckLinkKeyer;
 	IDeckLinkInput *deckLinkInput;
 	IDeckLinkOutput *deckLinkOutput;
+    IDeckLinkStatus *deckLinkStatus;
+    IDeckLinkProfileManager *deckLinkProfileManager;
+    DeckLinkProfileCallback *deckLinkProfileCallback;
+    BMDVideoOutputFlags _playbackVideoOutputFlags;
+    int64_t _previousPlaybackGroup;
+    BOOL _hasPreviousPlaybackGroup;
 	
 	DeckLinkDeviceInternalInputCallback *deckLinkInputCallback;
 	DeckLinkDeviceInternalOutputCallback *deckLinkOutputCallback;
 	
-	atomic_uint_fast64_t _sampleBufferCount_BackingStore;
     atomic_uint_fast64_t _scheduledFrameCount;
-    atomic_uint_fast64_t _scheduledAudioRequests;
     atomic_uint_fast64_t _playbackGeneration;
     atomic_bool _scheduledStopRequested;
     NSMutableDictionary<NSValue *, id> *_scheduledFrames;
     NSMutableArray *_scheduledStopHandlers;
-    dispatch_queue_t _playbackCallbackQueue;
-    BOOL _scheduledAudioPrerolled;
     BOOL _audioPrerollActive;
     DeckLinkScheduledStopState _scheduledStopState;
 }
@@ -66,9 +82,15 @@ struct DeckLinkPlaybackClock {
 @property (nonatomic, assign) int32_t persistantID;
 @property (nonatomic, assign) int32_t topologicalID;
 
+/// The only mutable storage for group attributes; publishes a complete snapshot.
+@property (atomic, strong) DeckLinkPlaybackGroupAttributes *playbackGroupAttributes;
+- (void)refreshPlaybackGroupAttributes;
+- (void)invalidatePlayback;
+
 // capture
 
-@property (atomic, assign) BOOL captureSupported;
+// Set during construction; immutable once the device is exposed.
+@property (nonatomic, assign) BOOL captureSupported;
 @property (atomic, assign) BOOL captureActive;
 @property (atomic, assign) BOOL captureInputSourceConnected;
 
@@ -94,22 +116,22 @@ struct DeckLinkPlaybackClock {
 
 // playback
 
-@property (atomic, assign) BOOL playbackSupported;
+// Set during construction; immutable once the device is exposed.
+@property (nonatomic, assign) BOOL playbackSupported;
 @property (atomic, assign) BOOL playbackActive;
 
 @property (nonatomic, weak) DeckLinkPlaybackSession *scheduledPlaybackSession;
 @property (nonatomic, strong) dispatch_queue_t playbackQueue;
 @property (nonatomic, strong) dispatch_queue_t frameDownloadQueue;
 
-@property (nonatomic, copy) NSArray *playbackVideoFormatDescriptions;
+// Replaced on profile activation; atomic access publishes immutable lists.
+@property (atomic, copy) NSArray *playbackVideoFormatDescriptions;
 @property (atomic, strong) __attribute__((NSObject)) CMVideoFormatDescriptionRef playbackActiveVideoFormatDescription;
 
-@property (nonatomic, copy) NSArray *playbackAudioFormatDescriptions;
+@property (atomic, copy) NSArray *playbackAudioFormatDescriptions;
 @property (atomic, strong) __attribute__((NSObject)) CMAudioFormatDescriptionRef playbackActiveAudioFormatDescription;
 
-@property (nonatomic, copy) NSArray *playbackKeyingModes;
-@property (atomic, copy) NSString *playbackActiveKeyingMode;
-@property (atomic, assign) float playbackKeyingAlpha;
+@property (atomic, copy) NSArray *playbackKeyingModes;
 
 @end
 
@@ -117,36 +139,47 @@ struct DeckLinkPlaybackClock {
 - (void)initializePlaybackScheduling;
 @end
 
-/// Internal operations used by DeckLinkPlaybackSession. Each method documents its queue requirement.
+/// Internal operations used by DeckLinkPlaybackSession and DeckLinkPlaybackGroup.
+/// Methods ending in OnQueue must be called on playbackQueue.
 @interface DeckLinkDevice (PlaybackSessionSupport)
-/// Returns whether the device is idle and available for a session. Call on playbackQueue.
+/// Returns whether the device is idle and available for a session.
 - (BOOL)canOpenPlaybackSessionOnQueue;
+- (HRESULT)validateVideoFormatOnQueue:(CMVideoFormatDescriptionRef)format;
+- (void)refreshPlaybackFormats;
+/// Joins the SDK playback group; enabled video then synchronizes to it.
+- (HRESULT)configurePlaybackGroupOnQueue:(int64_t)groupID;
+/// Best effort; always returns the output to ungrouped flags.
+- (void)restorePlaybackGroupOnQueue;
+/// Enables the video format, or disables video for NULL. Call after stopping.
+- (HRESULT)setVideoFormatOnPlaybackQueue:(CMVideoFormatDescriptionRef)format;
+/// Enables timestamped audio in the format, or disables audio for NULL. Call after stopping.
+- (HRESULT)setAudioFormatOnPlaybackQueue:(CMAudioFormatDescriptionRef)format;
+/// Applies the keying mode at full alpha.
+- (HRESULT)setKeyingOnPlaybackQueue:(NSString *)mode;
+- (HRESULT)endAudioPrerollOnQueue;
+/// Starts output at time zero; for a synchronized group, starts every member.
+- (HRESULT)startPlaybackOnQueue:(int64_t)timeScale;
+/// Cancels preparations immediately; armed runs on playbackQueue once they have drained.
+/// completion runs on playbackQueue after driver stop and frame release, or with a failure.
+- (void)armStopWithCompletion:(DeckLinkPlaybackStatusCompletion)completion armed:(DeckLinkPlaybackStatusCompletion)armed;
+- (HRESULT)getPlaybackRunningOnQueue:(BOOL *)running;
+/// One SDK stop; for a synchronized group, stops every member.
+- (HRESULT)requestStopOnQueue;
+/// Completes an armed stop. An output that was not running has no stopped callback,
+/// so disabling video flushes its retained frames instead.
+- (void)completeStopOnQueue:(HRESULT)status wasRunning:(BOOL)running;
 /// Runs block synchronously on playbackQueue, or inline if already on that queue.
 - (void)performPlaybackSync:(dispatch_block_t)block;
-/// Dispatches block asynchronously to the device's serial callback queue. Callable from any queue.
-- (void)deliverPlaybackCallback:(dispatch_block_t)block;
-/// Enables the video format, or disables video for NULL. Call on playbackQueue after stopping.
-- (HRESULT)setVideoFormatOnPlaybackQueue:(CMVideoFormatDescriptionRef)format;
-/// Enables the audio format, or disables audio for NULL. Call on playbackQueue after stopping.
-- (HRESULT)setAudioFormatOnPlaybackQueue:(CMAudioFormatDescriptionRef)format timestamped:(BOOL)timestamped;
-/// Applies the keying mode and alpha. Call on playbackQueue.
-- (HRESULT)setKeyingOnPlaybackQueue:(NSString *)mode alpha:(float)alpha;
-/// Ends audio preroll and starts output at startTime in timeScale units per second. Call on playbackQueue.
-- (HRESULT)startPlaybackOnQueue:(int64_t)startTime timeScale:(int64_t)timeScale;
-/// Requests stop and cancels pending submissions. Callable from any queue after initialization.
-/// Completion runs asynchronously on playbackQueue after driver stop and frame release,
-/// or reports a failure. Public stop callbacks are forwarded to the client callback queue.
-- (void)stopScheduledPlaybackWithInternalCompletion:(DeckLinkPlaybackStatusCompletion)completion;
 /// Submits PCM without waiting for playback; written receives the accepted sample-frame count.
 /// Begins audio preroll if output has not started. The driver copies the accepted prefix
-/// during the call; this method does not retain bytes. Call on playbackQueue.
+/// during the call; this method does not retain bytes.
 - (HRESULT)writeAudioOnPlaybackQueue:(const void *)bytes sampleFrameCount:(UInt32)count streamTime:(int64_t)time timeScale:(int64_t)scale written:(UInt32 *)written;
-/// Queries playback state, stream time, paired host time, and buffered audio. Call on playbackQueue.
+/// Queries playback state, stream time, paired host time, and buffered audio.
 - (HRESULT)readPlaybackClockOnQueue:(DeckLinkPlaybackClock *)clock;
 /// Retains and prepares a frame asynchronously, then schedules it on playbackQueue.
 /// Callable from any queue. maximum bounds all outstanding frames, including preparation.
 /// The time block runs on playbackQueue immediately before scheduling; return a negative
-/// value to skip the frame. accepted always runs on playbackQueue. completed runs only
-/// for accepted frames, also on playbackQueue.
+/// value to skip the frame (S_FALSE). accepted always runs on playbackQueue. completed
+/// runs only for accepted frames, also on playbackQueue.
 - (void)enqueuePlaybackPixelBuffer:(CVPixelBufferRef)buffer frameDuration:(int64_t)duration timeScale:(int64_t)scale maximumFrames:(NSUInteger)maximum displayTime:(int64_t (^)(void))time accepted:(void (^)(HRESULT))accepted completed:(DeckLinkScheduledFrameCompletion)completed;
 @end

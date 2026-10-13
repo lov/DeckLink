@@ -227,6 +227,7 @@ NSString * const DeckLinkDeviceBrowserDeviceKey = @"device";
 		
 		if(removedDevice != nil)
 		{
+			[removedDevice invalidatePlayback];
 			[devices removeObject:removedDevice];
 		}
 	});
