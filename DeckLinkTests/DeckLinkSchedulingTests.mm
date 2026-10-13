@@ -684,10 +684,10 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
     @try {
         // The driver has returned a new card ID, but the rest of the query is blocked.
         XCTAssertEqual(device.playbackGroupAttributes, before);
-        XCTAssertEqualObjects(device.deviceGroupID, @42);
-        XCTAssertEqualObjects(device.subDeviceIndex, @0);
-        XCTAssertTrue(device.supportsPlaybackSynchronization);
-        XCTAssertEqual(device.minimumPrerollVideoFrames, 1u);
+        XCTAssertEqualObjects(device.playbackGroupAttributes.deviceGroupID, @42);
+        XCTAssertEqualObjects(device.playbackGroupAttributes.subDeviceIndex, @0);
+        XCTAssertTrue(device.playbackGroupAttributes.supportsPlaybackSynchronization);
+        XCTAssertEqual(device.playbackGroupAttributes.minimumPrerollVideoFrames, 1u);
     } @finally { dispatch_semaphore_signal(hardware[0]->attributesQueryRelease); }
     [self waitForExpectations:@[refreshed] timeout:2];
     DeckLinkPlaybackGroupAttributes *after = device.playbackGroupAttributes;
@@ -714,7 +714,7 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
         XCTAssertEqual(device.playbackGroupAttributes, before);
     } @finally { dispatch_semaphore_signal(release); }
     [device performPlaybackSync:^{}];
-    XCTAssertEqual(device.minimumPrerollVideoFrames, 5u);
+    XCTAssertEqual(device.playbackGroupAttributes.minimumPrerollVideoFrames, 5u);
     XCTAssertEqual(before.minimumPrerollVideoFrames, 1u);
 }
 - (void)testProfileActivationRefreshesAttributesWithoutAPlaybackQueue {
@@ -724,7 +724,7 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
     XCTAssertNil(device.playbackQueue);
     hardware[0]->minimumPreroll = 6;
     XCTAssertEqual(hardware[0]->profileCallback->ProfileActivated(NULL), S_OK);
-    XCTAssertEqual(device.minimumPrerollVideoFrames, 6u);
+    XCTAssertEqual(device.playbackGroupAttributes.minimumPrerollVideoFrames, 6u);
 }
 - (void)testFormatListsRemainValidDuringConcurrentReplacement {
     DeckLinkDevice *device = devices[0];

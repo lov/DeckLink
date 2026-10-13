@@ -143,7 +143,10 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
     switch (_referencePolicy) {
         case DeckLinkPlaybackGroupReferenceRequired: return YES;
         case DeckLinkPlaybackGroupReferenceNotRequired: return NO;
-        default: return device.playbackGroupRequiresReference;
+        default: {
+            DeckLinkPlaybackGroupAttributes *attributes = device.playbackGroupAttributes;
+            return attributes ? attributes.playbackGroupRequiresReference : YES;
+        }
     }
 }
 - (BOOL)referenceLockedOnQueue {
@@ -349,7 +352,7 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
             self->_primed = YES;
             NSUInteger longest = 1;
             for (NSUInteger i = 0; i < members.count; ++i) {
-                NSUInteger count = MAX((NSUInteger)1, members[i].device.minimumPrerollVideoFrames);
+                NSUInteger count = MAX((NSUInteger)1, members[i].device.playbackGroupAttributes.minimumPrerollVideoFrames);
                 longest = MAX(longest, count);
                 for (NSUInteger frame = 0; frame < count; ++frame) submit(i, (int64_t)frame * duration.value);
             }

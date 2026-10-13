@@ -81,7 +81,7 @@ typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
     if (_audioFormat && (!asbd || asbd->mSampleRate != 48000 || asbd->mFormatID != kAudioFormatLinearPCM || !asbd->mChannelsPerFrame ||
         (asbd->mBitsPerChannel != 16 && asbd->mBitsPerChannel != 32) ||
         !(asbd->mFormatFlags & kAudioFormatFlagIsSignedInteger) || (asbd->mFormatFlags & kAudioFormatFlagIsNonInterleaved))) status = E_INVALIDARG;
-    _minimumVideoPreroll = MAX((NSUInteger)1, _device.minimumPrerollVideoFrames);
+    _minimumVideoPreroll = MAX((NSUInteger)1, _device.playbackGroupAttributes.minimumPrerollVideoFrames);
     if (_minimumVideoPreroll > 64) status = E_INVALIDARG;
     CMTime capacity = CMTimeConvertScale(_frameDuration, 48000, kCMTimeRoundingMethod_RoundAwayFromZero);
     NSUInteger bytesPerFrame = asbd ? (NSUInteger)asbd->mChannelsPerFrame * (asbd->mBitsPerChannel / 8) : 0;

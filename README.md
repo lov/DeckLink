@@ -91,7 +91,7 @@ Pixel buffers must match the selected output dimensions and pixel format and car
 
 ### Video timing and buffering
 
-The first set after open fills preroll: each buffer is repeated up to its own device's `minimumPrerollVideoFrames`, at contiguous times from zero. Sets submitted before playback runs are dropped. Playback starts automatically once every output has its video preroll and, when audio is enabled, a complete audio preroll packet. The default `prerollTimeout` is five seconds. Missing initial content fails and closes the group rather than generating placeholder video.
+The first set after open fills preroll: each buffer is repeated up to its own device's `playbackGroupAttributes.minimumPrerollVideoFrames`, at contiguous times from zero. Sets submitted before playback runs are dropped. Playback starts automatically once every output has its video preroll and, when audio is enabled, a complete audio preroll packet. The default `prerollTimeout` is five seconds. Missing initial content fails and closes the group rather than generating placeholder video.
 
 While running, the group reads one output's clock once per set and schedules every output at the same time: the next output frame boundary plus one frame of lead, which covers native preparation. A set that would not advance past the last scheduled time is dropped, so latency stays fixed when rendering runs faster than the output. The completion reports the scheduled time, or `kCMTimeInvalid` with a nil error for a dropped set.
 

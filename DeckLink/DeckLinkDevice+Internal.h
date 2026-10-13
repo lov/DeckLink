@@ -34,17 +34,6 @@ struct DeckLinkPlaybackClock {
 };
 
 
-/// Immutable attributes from one completed driver query sequence.
-/// Hold one snapshot while validating related fields across a profile refresh.
-@interface DeckLinkPlaybackGroupAttributes : NSObject
-@property (nonatomic, copy, readonly) NSNumber *deviceGroupID;
-@property (nonatomic, copy, readonly) NSNumber *subDeviceIndex;
-@property (nonatomic, assign, readonly) NSUInteger numberOfSubDevices;
-@property (nonatomic, assign, readonly) BOOL supportsPlaybackSynchronization;
-@property (nonatomic, assign, readonly) NSUInteger minimumPrerollVideoFrames;
-@property (nonatomic, assign, readonly) BOOL playbackGroupRequiresReference;
-@end
-
 @interface DeckLinkDevice ()
 {
 	IDeckLink *deckLink;

@@ -146,17 +146,6 @@ public:
     else refresh();
 }
 
-// Custom getters retain the published snapshot through its atomic strong accessor.
-- (NSNumber *)deviceGroupID { return self.playbackGroupAttributes.deviceGroupID; }
-- (NSNumber *)subDeviceIndex { return self.playbackGroupAttributes.subDeviceIndex; }
-- (NSUInteger)numberOfSubDevices { return self.playbackGroupAttributes.numberOfSubDevices; }
-- (BOOL)supportsPlaybackSynchronization { return self.playbackGroupAttributes.supportsPlaybackSynchronization; }
-- (NSUInteger)minimumPrerollVideoFrames { return MAX((NSUInteger)1, self.playbackGroupAttributes.minimumPrerollVideoFrames); }
-- (BOOL)playbackGroupRequiresReference {
-    DeckLinkPlaybackGroupAttributes *attributes = self.playbackGroupAttributes;
-    return attributes ? attributes.playbackGroupRequiresReference : YES;
-}
-
 - (BOOL)referenceSignalLocked {
     if (!self.playbackQueue) return NO;
     __block bool locked = false;
