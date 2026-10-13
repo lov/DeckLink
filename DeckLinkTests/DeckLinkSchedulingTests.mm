@@ -234,19 +234,11 @@ public:
 }
 @end
 
-@interface DeckLinkPlaybackSession (SessionTests)
-- (void)startAudioWorker;
-- (void)serviceAudio;
-@end
-@interface ManualPlaybackSession : DeckLinkPlaybackSession
-@end
-@implementation ManualPlaybackSession
-- (void)startAudioWorker {} // Drive worker ticks deterministically in driver tests.
-@end
+// Tests tick each member's audio worker explicitly for deterministic driver state.
 @interface ManualPlaybackGroup : DeckLinkPlaybackGroup
 @end
 @implementation ManualPlaybackGroup
-- (Class)sessionClass { return ManualPlaybackSession.class; }
+- (void)startAudioWorker {}
 @end
 
 static id TestVideoFormat(CMTime frameDuration, BOOL withFrameRate) {
@@ -275,7 +267,7 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
     TestOutput *driver;
     TestHardware *hardware;
     DeckLinkDevice *device;
-    ManualPlaybackSession *session;
+    DeckLinkPlaybackSession *session;
     DeckLinkPlaybackGroup *group;
     CVPixelBufferRef buffer;
     id videoFormat, audioFormat;
@@ -310,7 +302,7 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
 }
 - (void)useOutputWithAudio:(BOOL)audio keyer:(NSString *)keyer {
     group = [[ManualPlaybackGroup alloc] initWithOutputs:@[[self outputWithAudio:audio keyer:keyer]]];
-    session = (ManualPlaybackSession *)group.sessions.firstObject;
+    session = group.sessions.firstObject;
 }
 - (void)tearDown {
     driver->disableAudioStatus = S_OK; driver->disableVideoStatus = S_OK; driver->stopStatus = S_OK;
@@ -584,7 +576,7 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
     TestOutput *drivers[2];
     TestHardware *hardware[2];
     NSArray<DeckLinkDevice *> *devices;
-    NSArray<ManualPlaybackSession *> *members;
+    NSArray<DeckLinkPlaybackSession *> *members;
     DeckLinkPlaybackGroup *group;
     CVPixelBufferRef buffer;
     id videoFormat, audioFormat;
@@ -670,6 +662,18 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
         XCTAssertEqual(drivers[i]->audioTimes.back(), 801); XCTAssertFalse(drivers[i]->preroll);
     }
     XCTAssertEqual(hardware[0]->groupID, hardware[1]->groupID);
+}
+- (void)testOneAudioWorkerServicesEveryMember {
+    group = [[DeckLinkPlaybackGroup alloc] initWithOutputs:[self outputsWithAudio:YES]]; members = (NSArray *)group.sessions;
+    [self start];
+    // After preroll each output holds audio up to 801; at 960 samples in, the shared worker tops both up.
+    for (NSUInteger i = 0; i < 2; ++i) [devices[i] performPlaybackSync:^{ drivers[i]->streamTime = 960; }];
+    [self waitUntil:^BOOL {
+        __block BOOL serviced = YES;
+        for (NSUInteger i = 0; i < 2; ++i) [devices[i] performPlaybackSync:^{ serviced = serviced && drivers[i]->audioTimes.back() >= 801; }];
+        return serviced;
+    }];
+    XCTAssertNil(group.error);
 }
 - (void)testAttributeRefreshPublishesOnlyACompleteSnapshot {
     DeckLinkDevice *device = devices[0];

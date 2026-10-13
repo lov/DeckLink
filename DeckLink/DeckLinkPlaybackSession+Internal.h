@@ -13,6 +13,7 @@
 @property (nonatomic, strong, readonly) DeckLinkDevice *device;
 /// kCMTimeInvalid when the video format has no DeckLink frame rate; opening then fails.
 @property (nonatomic, assign, readonly) CMTime frameDuration;
+@property (nonatomic, assign, readonly) BOOL hasAudio;
 
 /// Validates settings and claims the device.
 - (HRESULT)reserveOnQueue;
@@ -25,8 +26,11 @@
 - (BOOL)isReadyForGroupStartOnQueue;
 - (HRESULT)prepareGroupStartOnQueue;
 - (void)groupDidStartOnQueue;
-/// Stops source reads and the audio worker.
+/// Stops source reads.
 - (void)beginGroupCloseOnQueue;
+/// One audio worker tick: keeps about one video frame of audio ahead of the output clock.
+/// Does nothing unless prerolling or running.
+- (void)serviceAudio;
 - (HRESULT)disableGroupOutputOnQueue;
 - (void)releaseGroupOwnershipOnQueue;
 - (void)fail:(HRESULT)status;

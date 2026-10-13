@@ -92,8 +92,8 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
 }
 
 @interface DeckLinkPlaybackGroup () {
-    dispatch_queue_t _queue, _callbacks;
-    dispatch_source_t _timer;
+    dispatch_queue_t _queue, _callbacks, _audioQueue;
+    dispatch_source_t _timer, _audioTimer;
     NSMutableArray<DeckLinkPlaybackSession *> *_reserved;
     NSMutableArray<DeckLinkPlaybackCompletion> *_closeHandlers;
     double _deadline;
@@ -110,10 +110,11 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
     if ((self = [super init])) {
         _outputs = [outputs copy]; _prerollTimeout = 5.0;
         NSMutableArray *sessions = [NSMutableArray new];
-        for (DeckLinkPlaybackOutput *output in _outputs) [sessions addObject:[[[self sessionClass] alloc] initWithOutput:output group:self]];
+        for (DeckLinkPlaybackOutput *output in _outputs) [sessions addObject:[[DeckLinkPlaybackSession alloc] initWithOutput:output group:self]];
         _sessions = [sessions copy];
         _queue = dispatch_queue_create("DeckLinkPlaybackGroup.coordinator", DISPATCH_QUEUE_SERIAL);
         _callbacks = dispatch_queue_create("DeckLinkPlaybackGroup.callbacks", DISPATCH_QUEUE_SERIAL);
+        _audioQueue = dispatch_queue_create("DeckLinkPlaybackGroup.audio", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0));
         _reserved = [NSMutableArray new]; _closeHandlers = [NSMutableArray new];
         _lastSubmittedTime = -1;
         // Deliberately distinct from the physical DeviceGroupID. IDs are persistent
@@ -124,6 +125,7 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
 }
 - (void)dealloc {
     if (_timer) dispatch_source_cancel(_timer);
+    if (_audioTimer) dispatch_source_cancel(_audioTimer);
     if (!_reserved.count) return;
     NSArray *members = [_reserved copy];
     dispatch_queue_t queue = _queue;
@@ -136,7 +138,6 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
 - (void)deliver:(DeckLinkPlaybackCompletion)callback error:(NSError *)error {
     if (callback) dispatch_async(_callbacks, ^{ callback(error == nil, error); });
 }
-- (Class)sessionClass { return DeckLinkPlaybackSession.class; }
 - (BOOL)synchronized { return self.sessions.count > 1; }
 - (BOOL)requiresReference:(DeckLinkDevice *)device {
     if (!self.synchronized) return NO;
@@ -228,11 +229,28 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
     dispatch_source_set_event_handler(_timer, ^{ [weakSelf monitor]; });
     dispatch_source_set_timer(_timer, DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC, 5 * NSEC_PER_MSEC);
     dispatch_resume(_timer);
+    [self startAudioWorker];
     [self deliver:completion error:nil];
     [self tryStart];
 }
 
 #pragma mark Starting and monitoring
+
+// One timer services every member with audio, so a group wakes once per tick rather than
+// once per output. Each member runs on its own device queue; members never wait on the group.
+- (void)startAudioWorker {
+    NSMutableArray<DeckLinkPlaybackSession *> *members = [NSMutableArray new];
+    for (DeckLinkPlaybackSession *session in self.sessions) if (session.hasAudio) [members addObject:session];
+    if (!members.count || _audioTimer) return;
+    _audioTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, DISPATCH_TIMER_STRICT, _audioQueue);
+    dispatch_source_set_event_handler(_audioTimer, ^{
+        for (DeckLinkPlaybackSession *session in members) [session.device performPlaybackSync:^{ [session serviceAudio]; }];
+    });
+    // DeckLink's 50 Hz callback is too slow for one frame at 60 fps. Strict
+    // delivery requests the 100 us leeway even when the application is backgrounded.
+    dispatch_source_set_timer(_audioTimer, DISPATCH_TIME_NOW, 2 * NSEC_PER_MSEC, 100 * NSEC_PER_USEC);
+    dispatch_resume(_audioTimer);
+}
 
 - (void)memberReady { dispatch_async(_queue, ^{ [self tryStart]; }); }
 - (void)memberFailed:(HRESULT)status {
@@ -387,6 +405,7 @@ static void CloseMembers(NSArray<DeckLinkPlaybackSession *> *members, dispatch_q
         if (self.state == DeckLinkPlaybackGroupClosed || self.state == DeckLinkPlaybackGroupNew) { [self finishClose:S_OK]; return; }
         [self transition:DeckLinkPlaybackGroupClosing];
         if (self->_timer) { dispatch_source_cancel(self->_timer); self->_timer = nil; }
+        if (self->_audioTimer) { dispatch_source_cancel(self->_audioTimer); self->_audioTimer = nil; }
         CloseMembers([self->_reserved copy], self->_queue, ^(HRESULT result) { [self finishClose:result]; });
     });
 }

@@ -34,7 +34,6 @@ typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
     CMTime _frameDuration;
     NSString *_keyingMode;
     DeckLinkSessionState _state;
-    dispatch_source_t _audioTimer;
     DeckLinkPlaybackAudioSource _audioSource;
     DeckLinkSessionAudioPacket *_pendingAudio;
     NSUInteger _channels, _bytesPerFrame, _audioCapacity;
@@ -59,10 +58,7 @@ typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
 }
 
 - (CMTime)frameDuration { return _frameDuration; }
-
-- (void)dealloc {
-    if (_audioTimer) dispatch_source_cancel(_audioTimer);
-}
+- (BOOL)hasAudio { return _audioFormat != nil; }
 
 - (HRESULT)reserveOnQueue {
     if (_state != DeckLinkSessionNew || ![_device canOpenPlaybackSessionOnQueue]) return E_ACCESSDENIED;
@@ -100,21 +96,9 @@ typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
     return status;
 }
 
-- (void)startAudioWorker {
-    if (!_channels || _audioTimer) return;
-    __weak typeof(self) weakSelf = self;
-    _audioTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, DISPATCH_TIMER_STRICT, _device.playbackQueue);
-    dispatch_source_set_event_handler(_audioTimer, ^{ [weakSelf serviceAudio]; });
-    // DeckLink's 50 Hz callback is too slow for one frame at 60 fps. Strict
-    // delivery requests the 100 us leeway even when the application is backgrounded.
-    dispatch_source_set_timer(_audioTimer, DISPATCH_TIME_NOW, 2 * NSEC_PER_MSEC, 100 * NSEC_PER_USEC);
-    dispatch_resume(_audioTimer);
-}
-
 - (void)fail:(HRESULT)status {
     if (_state == DeckLinkSessionFailed || _state == DeckLinkSessionClosing || _state == DeckLinkSessionClosed) return;
     _state = DeckLinkSessionFailed;
-    if (_audioTimer) { dispatch_source_cancel(_audioTimer); _audioTimer = nil; }
     [_group memberFailed:status];
 }
 
@@ -175,7 +159,6 @@ typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
     ++_prerolledVideoFrames;
     if (_state == DeckLinkSessionReady) {
         _state = DeckLinkSessionPrerolling;
-        [self startAudioWorker];
         _lastAudioProgressHostTime = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()));
     }
     [self serviceAudio];
@@ -209,7 +192,6 @@ typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
 - (void)beginGroupCloseOnQueue {
     _state = DeckLinkSessionClosing;
     _audioSource = nil; _pendingAudio = nil;
-    if (_audioTimer) { dispatch_source_cancel(_audioTimer); _audioTimer = nil; }
 }
 
 - (HRESULT)disableGroupOutputOnQueue {

@@ -108,7 +108,7 @@ Each output retains at most `max(3, minimumPrerollVideoFrames)` video buffers, i
 - `discontinuity` indicates recovery after missed output time. The application can use it to reset audio-processing state or apply a transition.
 - During recovery, the framework may request and discard missed audio to advance the source.
 
-The audio worker requests service every 2 ms and keeps roughly one video frame of audio ahead of the output clock. If the driver accepts only part of a packet, the output keeps the unwritten portion and retries it at its adjusted timestamp.
+One audio worker per group requests service every 2 ms for each output with audio, on that output's device queue, and keeps roughly one video frame of audio ahead of the output clock. A group therefore wakes once per tick, not once per output. If the driver accepts only part of a packet, the output keeps the unwritten portion and retries it at its adjusted timestamp.
 
 ### Threading, errors, and closing
 

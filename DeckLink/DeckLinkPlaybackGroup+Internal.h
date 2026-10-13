@@ -5,8 +5,8 @@
 @interface DeckLinkPlaybackGroup ()
 /// One session per output, in the order of `outputs`.
 @property (nonatomic, copy, readonly) NSArray<DeckLinkPlaybackSession *> *sessions;
-/// The session class instantiated for each output; tests substitute a subclass.
-- (Class)sessionClass;
+/// Starts the shared audio worker once open; tests replace it to tick members manually.
+- (void)startAudioWorker;
 @end
 
 /// Events posted by member sessions; both return immediately and never wait on the group.
