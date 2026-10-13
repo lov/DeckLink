@@ -8,13 +8,10 @@ This project is a fork of [Boinx Software's DeckLink framework](https://github.c
 
 - Device discovery, connection notifications, and supported video/audio format enumeration.
 - Video and audio capture through Core Media sample-buffer delegates.
-- Immediate video/audio playback APIs for existing integrations.
-- Scheduled playback through `DeckLinkPlaybackSession`, with video and audio on the device's output timeline.
+- Scheduled video and audio playback through `DeckLinkPlaybackGroup`, for a single output or for synchronized outputs on one physical card.
 - Asynchronous native video-frame preparation, bounded buffer retention, and completion-based release.
 - Timestamped audio, partial-write handling, silence generation, and recovery from missed output time.
-- Keying controls and helpers for pixel formats, bit depth, alpha, and color metadata.
-
-The session API is the preferred entry point for applications that want the framework to manage scheduled output. Lower-level scheduling methods remain available on `DeckLinkDevice (Playback)` for applications that manage their own timestamps and buffering.
+- Keying and helpers for pixel formats, bit depth, alpha, and color metadata.
 
 ## Responsibilities
 
@@ -23,8 +20,8 @@ The framework owns communication with the device. The application owns the media
 | Framework | Application |
 | --- | --- |
 | Discover devices and expose supported formats | Select a device and format; persist settings |
-| Configure and start hardware output | Decide when output should be enabled |
-| Prepare native frames and schedule presentation | Decode, render, apply effects, and supply pixel buffers |
+| Configure, start, and stop hardware output | Decide when output should be enabled |
+| Prepare native frames and choose their presentation time | Decode, render, apply effects, and supply pixel buffers |
 | Request and schedule PCM audio | Decode, mix, map channels, apply gain and fades |
 | Maintain the hardware output timeline | Maintain the playhead and implement pause, resume, and seek |
 | Retain buffers, handle driver backpressure, and close output safely | Present errors and choose whether to retry or disable output |
@@ -56,75 +53,49 @@ The result is `Build/Release/DeckLink.framework`. Link and embed it in the appli
 #import <DeckLink/DeckLink.h>
 ```
 
-## Scheduled playback
+## Playback
 
-A session exclusively owns one device's scheduled output until it closes successfully. Its video format, audio format, frame duration, and keying mode are fixed at initialization. Do not mix an open session with the device's immediate playback or lower-level configuration/scheduling APIs.
+All playback goes through `DeckLinkPlaybackGroup`. A group with one output is an ordinary independent output. A group with two or more outputs plays out synchronized on sub-devices of one physical card. The lifecycle and submission are the same in both cases:
 
-The lifecycle is:
+1. Describe each output with a `DeckLinkPlaybackOutput`. It takes a device, formats from the device's `playbackVideoFormatDescriptions` and `playbackAudioFormatDescriptions`, a keying mode, and an audio source. The frame duration is the video format's own DeckLink frame rate.
+2. Create the group from the outputs, then set its `errorHandler` and, optionally, its `stateHandler`.
+3. Open the group. After opening succeeds, submit one rendered pixel buffer per output for each render pass.
+4. Keep supplying video and audio while the output timeline advances. Pause, seek, and switch media inside the audio source.
+5. Close the group before changing any output setting or device, or before replacing it after an error.
 
-1. Select formats from the device's supported-format arrays and create a session.
-2. Set the audio source and error handler, then open the session.
-3. After opening succeeds, submit rendered pixel buffers. The first accepted frame triggers audio preroll, then starts playback.
-4. Continue supplying video and audio while the output timeline advances.
-5. Close the session before changing formats, changing devices, or replacing it after an error.
-
-### Creating a session
-
-The following example is a method on an application object with a strong `DeckLinkPlaybackSession *outputSession` property. The caller supplies a device and formats selected from `playbackVideoFormatDescriptions` and `playbackAudioFormatDescriptions`; use `NULL` for video-only output.
-
-Despite its name, `CMVideoFormatDescriptionGetDeckLinkFrameRate` returns the duration of one frame as a `CMTime`, such as `1001/60000` for approximately 59.94 fps.
+Output settings, including the audio source, are fixed for the group's lifetime.
 
 ```objc
-- (void)openOutputWithDevice:(DeckLinkDevice *)device
-                videoFormat:(CMVideoFormatDescriptionRef)videoFormat
-                audioFormat:(CMAudioFormatDescriptionRef)audioFormat {
-    CMTime frameDuration = kCMTimeInvalid;
-    if (CMVideoFormatDescriptionGetDeckLinkFrameRate(videoFormat, &frameDuration) != noErr) {
-        return;
-    }
-
-    DeckLinkPlaybackSession *session = [[DeckLinkPlaybackSession alloc]
-        initWithDevice:device
-        videoFormat:videoFormat
-        audioFormat:audioFormat
-        frameDuration:frameDuration
-        keyingMode:DeckLinkKeyingModeNone];
-    self.outputSession = session;
-
-    session.errorHandler = ^(NSError *error) {
-        NSLog(@"DeckLink output failed: %@", error);
-        // Arrange close/recovery on the application's output-control queue.
-    };
-
-    [session setAudioSource:^NSData *(NSUInteger samples, NSUInteger channels,
-                                     CMTime presentationTime, BOOL discontinuity) {
-        // Replace with prepared interleaved PCM from the application's audio engine.
-        return nil; // Silence.
+// One output; add more outputs on the same card to synchronize them.
+DeckLinkPlaybackOutput *output = [[DeckLinkPlaybackOutput alloc]
+    initWithDevice:device videoFormat:videoFormat audioFormat:audioFormat keyingMode:DeckLinkKeyingModeNone
+    audioSource:^NSData *(NSUInteger samples, NSUInteger channels, CMTime presentationTime, BOOL discontinuity) {
+        return nil; // Replace with prepared interleaved PCM; nil is silence.
     }];
 
-    [session openWithCompletion:^(BOOL success, NSError *error) {
-        if (!success) {
-            NSLog(@"Could not open DeckLink output: %@", error);
-            return;
-        }
-        // Notify the renderer on its owning queue that it may submit video.
-    }];
-}
+// Retain the group until close completes.
+self.outputGroup = [[DeckLinkPlaybackGroup alloc] initWithOutputs:@[output]];
+self.outputGroup.errorHandler = ^(NSError *error) {
+    // The group has started cleanup; report the failure on the application's queue.
+};
+[self.outputGroup openWithCompletion:^(BOOL success, NSError *error) {
+    if (!success) return;
+    // Notify the renderer that it may submit frame sets.
+}];
+
+// Once per render pass, one buffer per output in `outputs` order:
+[self.outputGroup submitPixelBuffers:@[(__bridge id)renderedPixelBuffer] completion:nil];
 ```
 
-Keep the session alive in the application until closing completes. Opening alone does not start playback. Once the open completion reports success, send each rendered frame using:
-
-```objc
-[self.outputSession submitPixelBuffer:renderedPixelBuffer];
-```
-
-The pixel buffer must match the selected output dimensions and pixel format and contain the color metadata required by the driver. The application handles rendering and pixel-format conversion; the framework prepares the native DeckLink frame. Do not modify a buffer while the framework is using it. For integrations that reuse storage, use the lower-level API's explicit frame-completion callback.
+Pixel buffers must match the selected output dimensions and pixel format and carry the color metadata the driver requires. The application handles rendering and pixel-format conversion; the framework wraps the buffer in a native DeckLink frame. Do not modify a buffer after submitting it.
 
 ### Video timing and buffering
 
-After native frame preparation, the session queries the device clock and schedules the frame at the next video-frame boundary. At 60 fps, a frame ready at output time 20 ms targets approximately 33.3 ms. Submissions targeting a timestamp already used by the session are discarded.
+The first set after open fills preroll: each buffer is repeated up to its own device's `minimumPrerollVideoFrames`, at contiguous times from zero. Sets submitted before playback runs are dropped. Playback starts automatically once every output has its video preroll and, when audio is enabled, a complete audio preroll packet. The default `prerollTimeout` is five seconds. Missing initial content fails and closes the group rather than generating placeholder video.
 
-The current session retains at most three video buffers, including preparation and frames awaiting completion. This is a resource limit, not a requirement to preroll three video frames. Excess submissions are discarded without restarting healthy audio. The lower-level scheduled-video API allows up to eight outstanding frames.
+While running, the group reads one output's clock once per set and schedules every output at the same time: the next output frame boundary plus one frame of lead, which covers native preparation. A set that would not advance past the last scheduled time is dropped, so latency stays fixed when rendering runs faster than the output. The completion reports the scheduled time, or `kCMTimeInvalid` with a nil error for a dropped set.
+
+Each output retains at most `max(3, minimumPrerollVideoFrames)` video buffers, including those being prepared and those awaiting completion. Devices requesting more than 64 preroll frames are rejected at open. If a frame arrives too late, or an output already holds its maximum, that output skips the frame and the completion reports `DeckLinkPlaybackGroupFrameRejected`; playback continues. Other driver failures stop the group.
 
 ### Audio contract
 
@@ -133,30 +104,35 @@ The current session retains at most three video buffers, including preparation a
 - The audio source runs serially on the device's scheduling queue. Supply prepared audio promptly; do not wait for decoding, rendering, or UI work.
 - `presentationTime` uses the device's output timeline with a timescale of 48000. It is not the application's clip/playhead position.
 - Returning `nil`, or data with the wrong length, supplies silence.
-- `discontinuity` indicates replacement of an existing source or recovery after missed output time. The application can use it to reset audio-processing state or apply a transition.
+- The source is fixed for the output's lifetime. Pause, seek, mute, or switch media inside it; smooth transitions there as well.
+- `discontinuity` indicates recovery after missed output time. The application can use it to reset audio-processing state or apply a transition.
 - During recovery, the framework may request and discard missed audio to advance the source.
 
-The audio worker requests service every 2 ms and maintains roughly one video frame's worth of audio ahead of the output clock. If the driver accepts only part of a packet, the session retains and retries the unwritten portion at its adjusted timestamp.
-
-Implement pause and seek in the media source while keeping the output session running. `setAudioSource:` waits for an ongoing source read, replaces the source, and discards unwritten pending PCM. Samples already accepted by the driver remain buffered.
+The audio worker requests service every 2 ms and keeps roughly one video frame of audio ahead of the output clock. If the driver accepts only part of a packet, the output keeps the unwritten portion and retries it at its adjusted timestamp.
 
 ### Threading, errors, and closing
 
-The framework uses separate serial queues for native frame preparation, playback scheduling/audio service, and application callbacks. Preparation and client callbacks therefore do not occupy the scheduling queue. Open/close completions and the session's error handler are delivered on a private callback queue; dispatch UI work to the main queue and application state changes to their owning queue.
+The framework uses separate serial queues for native frame preparation, per-device scheduling and audio service, group coordination, and group callbacks. Preparation and client callbacks therefore never occupy the scheduling queue. Open/close completions, submission completions, `errorHandler`, and `stateHandler` run on the group's private callback queue. Dispatch UI work to the main queue and application state changes to their owning queue.
 
-A runtime failure suspends new session work and reports an error. Close the session before creating a replacement. `closeWithCompletion:` stops source reads before returning, then waits for frame preparation, driver stop, retained-frame release, and disabling audio/video output. Repeated close calls during closing join the same operation. Retry a failed close before opening another session; a successfully closed session cannot be reopened.
+Every error uses `DeckLinkPlaybackGroupErrorDomain`. Driver failures carry the native status as an `NSOSStatusErrorDomain` underlying error. A runtime failure stops every output, starts cleanup, and keeps the error in `error`. Await a successful close before creating a replacement group.
 
-Low buffering requires timely media production and scheduling. A matching nominal render rate does not align the renderer's clock phase with the device. The current session does not provide a hard real-time guarantee or automatically synchronize multiple devices; late frames and audio underruns can still occur under load.
+`closeWithCompletion:` stops each output's audio source reads. It then waits for frame preparation, sends one SDK stop, and waits for frame release. Finally it disables audio and video output and restores each device's previous SDK playback-group ID. Repeated close calls during closing join the same operation. If cleanup fails, every output keeps its device reserved; retry close before reusing the outputs. Dropping a group starts best-effort cleanup; retain it and call close explicitly to observe failures and retry.
 
-## Immediate playback
+Low buffering requires timely media production. Matching the nominal render rate does not align the renderer's clock phase with the device's. Late frames and audio underruns can still occur under load.
 
-The existing `playbackPixelBuffer:`, `playbackMetalBuffer:`, and continuous-audio methods remain available. They use the driver's synchronous display/write APIs without assigning media presentation timestamps. The pixel-buffer wrapper still performs preparation and display through asynchronous queues, so "synchronous" describes the native driver call.
+## Synchronized outputs on one card
 
-Use these APIs with output configured through `DeckLinkDevice (Playback)`. Complete scheduled stop/close before switching to immediate playback.
+A group with two or more outputs requires distinct sub-devices of one physical card that support SDK playback synchronization, and video formats with identical frame rates. It rejects different physical `deviceGroupID` values, unavailable identities, duplicate sub-device indices, inactive outputs, devices owned by another group, and unsupported synchronization. Connector counts and profile peer groups are not used as physical-card identity. Grouping does not merge media sources: each output still receives its own video and audio.
+
+The group ends audio preroll on every member and makes one SDK start call, so the outputs start on the same frame. Hardware synchronization alone does not guarantee that separately prepared frames target the same frame number; `submitPixelBuffers:completion:` schedules every member at the same time for that reason. Native submissions remain separate per output; there is no atomic submission across outputs.
+
+The SDK requires common reference lock for grouped playback, with the documented exception of sub-devices of the **DeckLink 8K Pro**. The framework recognizes that exact SDK model name; other models conservatively require external reference. Set `referencePolicy` before open to always require or never require reference instead, for example for hardware known to synchronize internally. Duo 2 and Quad 2 therefore require REF IN even when every selected output is on one card. Ensure the reference frame rate and timing are compatible with the selected outputs.
+
+Once every member is prerolled, a group that requires reference waits for lock in `DeckLinkPlaybackGroupWaitingForReference`, without a deadline, and then starts. Close the group to stop waiting. Lock is polled every 100 ms while waiting or running; losing it stops the group. An unexpected stop is detected through each device's stopped callback rather than by polling. Profile-change callbacks and browser device-removal notifications invalidate the group. Grouping is requested per output with `bmdVideoOutputSynchronizeToPlaybackGroup`. The previous SDK playback-group ID, a persistent driver setting, is restored on close on a best-effort basis: a failed restore is logged and does not fail close. See Blackmagic's [synchronization requirements](https://sdk-doc.blackmagicdesign.com/decklink-sdk/HighLevel/synchronized.html).
 
 ## Tests
 
-The scheduling tests use a mock driver and require no connected device:
+The playback tests use a mock driver and require no connected device:
 
 ```sh
 xcodebuild test \
@@ -164,14 +140,21 @@ xcodebuild test \
   -scheme 'DeckLink Debug' \
   -configuration Debug \
   -destination 'platform=macOS' \
-  -only-testing:DeckLinkTests/DeckLinkSchedulingTests \
-  -only-testing:DeckLinkTests/DeckLinkPlaybackSessionTests \
+  -only-testing:DeckLinkTests/DeckLinkSingleOutputTests \
+  -only-testing:DeckLinkTests/DeckLinkPlaybackGroupTests \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-They cover buffer limits and ownership, frame preparation, callback ordering, preroll, partial audio writes, missed timestamps, source replacement, and cleanup failures. Other tests in `DeckLinkTests` include device-dependent capture and playback checks and require suitable Blackmagic hardware and drivers.
+They cover:
+- buffer limits and ownership, frame preparation, and callback isolation;
+- preroll, partial audio writes, missed timestamps, and source replacement;
+- single-output playback and synchronized start/stop of up to four outputs;
+- shared frame-set boundaries, reference requirements and loss, and profile invalidation;
+- preroll timeout and retryable cleanup failures.
 
-Public header comments use `///` documentation for Xcode Quick Help. See [DeckLinkPlaybackSession.h](DeckLink/DeckLinkPlaybackSession.h) and [DeckLinkDevice+Playback.h](DeckLink/DeckLinkDevice+Playback.h) for the API contracts.
+Other tests in `DeckLinkTests` cover capture and format enumeration; they require suitable Blackmagic hardware and drivers.
+
+Public header comments use `///` documentation for Xcode Quick Help. See [DeckLinkPlaybackGroup.h](DeckLink/DeckLinkPlaybackGroup.h) and [DeckLinkPlaybackOutput.h](DeckLink/DeckLinkPlaybackOutput.h) for the API contracts.
 
 ## License and attribution
 
