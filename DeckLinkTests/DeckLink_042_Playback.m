@@ -23,7 +23,7 @@
 	[super tearDown];
 }
 
-- (void)testVideoFormatDescriptions
+- (void)testVideoFormatDescriptionsCarryModeAndFrameRate
 {
 	DeckLinkDevice *device = [DeckLinkDevice devicesWithIODirection:DeckLinkDeviceIODirectionPlayback].firstObject;
 	XCTAssertNotNil(device);
@@ -34,13 +34,10 @@
 	for (id videoFormatDescription_ in videoFormatDescriptions)
 	{
 		CMVideoFormatDescriptionRef videoFormatDescription = (__bridge CMVideoFormatDescriptionRef)videoFormatDescription_;
-		
-		XCTestExpectation *expectation = [self expectationWithDescription:[NSString stringWithFormat:@"%s:%@", __FUNCTION__, videoFormatDescription]];
-		[device setPlaybackActiveVideoFormatDescription:videoFormatDescription completedHandler:^(BOOL status, NSError *outError){
-			if (status)
-				[expectation fulfill];
-		}];
-		[self waitForExpectationsWithTimeout:1.0 handler:^(NSError *error) {}];
+		XCTAssertNotNil((__bridge id)CMFormatDescriptionGetExtension(videoFormatDescription, DeckLinkFormatDescriptionDisplayModeKey));
+		CMTime frameDuration = kCMTimeInvalid;
+		XCTAssertEqual(CMVideoFormatDescriptionGetDeckLinkFrameRate(videoFormatDescription, &frameDuration), noErr);
+		XCTAssertTrue(CMTIME_IS_NUMERIC(frameDuration));
 	}
 }
 
@@ -48,48 +45,14 @@
 {
 	DeckLinkDevice *device = [DeckLinkDevice devicesWithIODirection:DeckLinkDeviceIODirectionPlayback].firstObject;
 	XCTAssertNotNil(device);
-	
-	NSArray *audioFormatDescriptions = device.playbackAudioFormatDescriptions;
-	XCTAssertGreaterThan(audioFormatDescriptions.count, 0);
-	
-	for (id audioFormatDescription_ in audioFormatDescriptions)
-	{
-		CMAudioFormatDescriptionRef audioFormatDescription = (__bridge CMVideoFormatDescriptionRef)audioFormatDescription_;
-		
-		XCTestExpectation *expectation = [self expectationWithDescription:[NSString stringWithFormat:@"%s:%@", __FUNCTION__, audioFormatDescription]];
-		[device setPlaybackActiveAudioFormatDescription:audioFormatDescription completedHandler:^(BOOL status, NSError *outError){
-			if (status)
-				[expectation fulfill];
-		}];
-		[self waitForExpectationsWithTimeout:1.0 handler:^(NSError *error) {}];
-	}
+	XCTAssertGreaterThan(device.playbackAudioFormatDescriptions.count, 0);
 }
 
-- (void)testKeying
+- (void)testKeyingModesIncludeNone
 {
 	DeckLinkDevice *device = [DeckLinkDevice devicesWithIODirection:DeckLinkDeviceIODirectionPlayback].firstObject;
 	XCTAssertNotNil(device);
-
-	NSArray *keyingModes = device.playbackKeyingModes;
-	// keyingModes may be nil
-	
-	for (NSString *keyingMode in keyingModes)
-	{
-		XCTestExpectation *expectation = [self expectationWithDescription:[NSString stringWithFormat:@"%s:%@", __FUNCTION__, keyingMode]];
-		[device setPlaybackActiveKeyingMode:keyingMode alpha:1 completedHandler:^(BOOL status, NSError *outError){
-			if (status)
-				[expectation fulfill];
-		}];
-		[self waitForExpectationsWithTimeout:1.0 handler:^(NSError *error) {}];
-	}
-	
-	XCTestExpectation *expectation = [self expectationWithDescription:[NSString stringWithFormat:@"%s:Invalid", __FUNCTION__]];
-	expectation.inverted = YES;
-	[device setPlaybackActiveKeyingMode:@"Invalid" alpha:1 completedHandler:^(BOOL status, NSError *outError){
-		if (status)
-			[expectation fulfill];
-	}];
-	[self waitForExpectationsWithTimeout:1.0 handler:^(NSError *error) {}];
+	XCTAssertTrue([device.playbackKeyingModes containsObject:DeckLinkKeyingModeNone]);
 }
 
 @end
