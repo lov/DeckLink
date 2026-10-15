@@ -113,9 +113,10 @@ static char DeckLinkPlaybackQueueKey;
 	if (deckLinkOutput->GetDisplayModeIterator(&displayModeIterator) == S_OK)
 	{
 		BMDPixelFormat pixelFormats[] = {
-			bmdFormat8BitYUV, // == kCVPixelFormatType_422YpCbCr8 == '2vuy'
-			bmdFormat10BitYUVA, // 'Ay10'
-			kDeckLinkPrimaryRGBPixelFormat,  
+			bmdFormat8BitYUV, // 8-bit Y'CbCr 4:2:2, == kCVPixelFormatType_422YpCbCr8 == '2vuy'
+			bmdFormat10BitYUV, // 10-bit Y'CbCr 4:2:2, == kCVPixelFormatType_422YpCbCr10 == 'v210'
+			bmdFormat10BitYUVA, // 10-bit Y'CbCrA 4:2:2:4 with alpha, 'Ay10'
+			kDeckLinkPrimaryRGBPixelFormat, // 8-bit BGRA with alpha
 		};
 		
 		NSMutableArray *formatDescriptions = [NSMutableArray array];
@@ -336,16 +337,19 @@ static char DeckLinkPlaybackQueueKey;
     else dispatch_sync(self.playbackQueue, block);
 }
 
-- (HRESULT)validateVideoFormatOnQueue:(CMVideoFormatDescriptionRef)format {
+- (HRESULT)validateVideoFormatOnQueue:(CMVideoFormatDescriptionRef)format keyingMode:(NSString *)keyingMode {
     if (!deckLinkAttributes || !deckLinkOutput || !format) return E_INVALIDARG;
     int64_t support = 0, duplex = bmdDuplexInactive;
     if (deckLinkAttributes->GetInt(BMDDeckLinkVideoIOSupport, &support) != S_OK || !(support & bmdDeviceSupportsPlayback) ||
         deckLinkAttributes->GetInt(BMDDeckLinkDuplex, &duplex) != S_OK || duplex == bmdDuplexInactive) return E_ACCESSDENIED;
     NSNumber *mode = (__bridge NSNumber *)CMFormatDescriptionGetExtension(format, DeckLinkFormatDescriptionDisplayModeKey);
     if (![mode isKindOfClass:NSNumber.class]) return E_INVALIDARG;
+    // A keyed output must play the mode and pixel format with the keyer on, not merely without it.
+    BOOL keying = keyingMode && ![keyingMode isEqualToString:DeckLinkKeyingModeNone];
     bool supported = false;
     HRESULT status = deckLinkOutput->DoesSupportVideoMode(bmdVideoConnectionUnspecified, mode.intValue,
-        CMFormatDescriptionGetMediaSubType(format), bmdNoVideoOutputConversion, bmdSupportedVideoModeDefault, NULL, &supported);
+        CMFormatDescriptionGetMediaSubType(format), bmdNoVideoOutputConversion, keying ? bmdSupportedVideoModeKeying : bmdSupportedVideoModeDefault,
+        NULL, &supported);
     return status != S_OK ? status : (supported ? S_OK : E_INVALIDARG);
 }
 

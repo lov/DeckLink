@@ -110,6 +110,8 @@ public:
     HRESULT disableVideoStatus = S_OK, disableAudioStatus = S_OK;
     NSUInteger videoDisableCalls = 0, audioDisableCalls = 0, displayedFrames = 0, writtenAudioFrames = 0;
     HRESULT callbackStatus = S_OK;
+    BMDSupportedVideoModeFlags supportFlags = bmdSupportedVideoModeDefault;
+    bool keyingModeSupported = true;
     HRESULT scheduleStatus = S_OK, startStatus = S_OK, stopStatus = S_OK, createStatus = S_OK;
     BMDAudioOutputStreamType audioType = bmdAudioOutputStreamContinuous;
     uint32_t audioLimit = 32;
@@ -143,7 +145,9 @@ public:
         if (createStatus != S_OK) return createStatus;
         *frame = new TestFrame(); return S_OK;
     }
-HRESULT DoesSupportVideoMode ( BMDVideoConnection connection ,  BMDDisplayMode requestedMode,  BMDPixelFormat requestedPixelFormat,  BMDVideoOutputConversionMode conversionMode,  BMDSupportedVideoModeFlags flags,  BMDDisplayMode* actualMode,  bool* supported) override { *supported = true; return S_OK; }
+HRESULT DoesSupportVideoMode ( BMDVideoConnection connection ,  BMDDisplayMode requestedMode,  BMDPixelFormat requestedPixelFormat,  BMDVideoOutputConversionMode conversionMode,  BMDSupportedVideoModeFlags flags,  BMDDisplayMode* actualMode,  bool* supported) override {
+    supportFlags = flags; *supported = keyingModeSupported || !(flags & bmdSupportedVideoModeKeying); return S_OK;
+}
 HRESULT GetDisplayMode ( BMDDisplayMode displayMode,  IDeckLinkDisplayMode** resultDisplayMode) override { return E_NOTIMPL; }
 HRESULT GetDisplayModeIterator ( IDeckLinkDisplayModeIterator** iterator) override { return E_NOTIMPL; }
 HRESULT SetScreenPreviewCallback ( IDeckLinkScreenPreviewCallback* previewCallback) override { return E_NOTIMPL; }
@@ -505,6 +509,14 @@ static void DrainGroup(DeckLinkPlaybackGroup *group, NSArray<DeckLinkDevice *> *
     [self useOutputWithAudio:YES keyer:@"External"];
     XCTAssertFalse([self openGroup]); XCTAssertFalse(driver->videoEnabled);
     [self useOutputWithAudio:YES keyer:@"None"]; [self start];
+}
+- (void)testKeyedOutputValidatesTheModeWithTheKeyer {
+    driver->keyingModeSupported = false;
+    [self useOutputWithAudio:YES keyer:@"External"];
+    XCTAssertFalse([self openGroup]); XCTAssertEqual(driver->supportFlags, bmdSupportedVideoModeKeying);
+    XCTAssertFalse(driver->videoEnabled); XCTAssertNil(device.scheduledPlaybackSession);
+    [self useOutputWithAudio:YES keyer:@"None"]; [self start];
+    XCTAssertEqual(driver->supportFlags, bmdSupportedVideoModeDefault);
 }
 - (void)testSecondGroupCannotReconfigureAnOwnedDevice {
     [self open];

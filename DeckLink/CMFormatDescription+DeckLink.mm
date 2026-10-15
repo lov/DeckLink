@@ -127,7 +127,7 @@ unsigned char CMVideoFormatDescriptionIMTGetBitDepth(CMVideoFormatDescriptionRef
 	FourCharCode subtype = CMFormatDescriptionGetMediaSubType(format);
 	if (subtype == bmdFormat8BitYUV || subtype == bmdFormat8BitBGRA)
 		return 8;
-	if (subtype == bmdFormat10BitYUVA)
+	if (subtype == bmdFormat10BitYUV || subtype == bmdFormat10BitYUVA)
 		return 10;
 
 	return 0;

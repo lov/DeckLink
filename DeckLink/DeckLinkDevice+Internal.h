@@ -133,7 +133,9 @@ struct DeckLinkPlaybackClock {
 @interface DeckLinkDevice (PlaybackSessionSupport)
 /// Returns whether the device is idle and available for a session.
 - (BOOL)canOpenPlaybackSessionOnQueue;
-- (HRESULT)validateVideoFormatOnQueue:(CMVideoFormatDescriptionRef)format;
+/// Whether the device plays the format's display mode and pixel format, with the keyer on
+/// unless keyingMode is nil or DeckLinkKeyingModeNone.
+- (HRESULT)validateVideoFormatOnQueue:(CMVideoFormatDescriptionRef)format keyingMode:(NSString *)keyingMode;
 - (void)refreshPlaybackFormats;
 /// Joins the SDK playback group; enabled video then synchronizes to it.
 - (HRESULT)configurePlaybackGroupOnQueue:(int64_t)groupID;

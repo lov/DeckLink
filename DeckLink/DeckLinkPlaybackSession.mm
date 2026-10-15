@@ -63,7 +63,7 @@ typedef NS_ENUM(NSUInteger, DeckLinkSessionState) {
 - (HRESULT)reserveOnQueue {
     if (_state != DeckLinkSessionNew || ![_device canOpenPlaybackSessionOnQueue]) return E_ACCESSDENIED;
     if (!CMTIME_IS_NUMERIC(_frameDuration) || _frameDuration.value <= 0) return E_INVALIDARG;
-    HRESULT supported = [_device validateVideoFormatOnQueue:(__bridge CMVideoFormatDescriptionRef)_videoFormat];
+    HRESULT supported = [_device validateVideoFormatOnQueue:(__bridge CMVideoFormatDescriptionRef)_videoFormat keyingMode:_keyingMode];
     if (supported != S_OK) return supported;
     _device.scheduledPlaybackSession = self;
     return S_OK;
